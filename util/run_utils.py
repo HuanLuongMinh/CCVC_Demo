@@ -274,7 +274,7 @@ class RunContext(object):
             'mode_confident': a.mode_confident, 'mode_mapping': a.mode_mapping, 'use_MLP': a.use_MLP,
             'use_norm': a.use_norm, 'use_dropout': a.use_dropout, 'dropout': a.dropout,
             'use_con': getattr(a, 'use_con', True), 'use_dis': getattr(a, 'use_dis', True),
-            'sup_pure': getattr(a, 'sup_pure', False), 'use_SPL': a.use_SPL, 'mode_criterion': a.mode_criterion,
+            'sup_pure': getattr(a, 'sup_pure', False), 'use_SPL': a.use_SPL, 'mode_criterion': getattr(a, 'mode_criterion', 'CE'),
             'amp': a.amp, 'world_size': a.world_size, 'ddp': a.ddp, 'dist_backend': a.dist_backend,
             'effective_batch_labeled': a.batch_size * a.world_size,
             'effective_batch_unlabeled': 0 if getattr(a, 'sup_pure', False) else a.batch_size * a.world_size,
@@ -315,7 +315,7 @@ class RunContext(object):
             if ck.get('rng') and len(ck['rng']) == a.world_size:
                 set_rng_state(ck['rng'][max(a.local_rank, 0)])
             if self.main:
-                removed = self.train_csv.truncate(lambda r: int(r['iteration']) < self.global_iter)
+                removed = self.train_csv.truncate(lambda r: int(r['iteration']) <= self.global_iter)
                 for log in (self.eval_csv, self.pseudo_csv, self.conf_csv):
                     removed += log.truncate(lambda r: int(r['epoch']) <= ck['epoch'])
                 old.setdefault('resumes', []).append({'time': time.strftime('%Y-%m-%d %H:%M:%S'),

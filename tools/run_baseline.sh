@@ -60,14 +60,14 @@ esac
 # paper / upstream values shared by every method (README_OEM tables 3.1 and 3.2)
 COMMON="--backbone resnet101 --crop_size 512 --base_lr 0.001 --lr_backbone 1.0 --lr_network 10.0 --mul_scheduler 0.9
         --mode_mapping else --conf_threshold 0.9 --conf_prob True --w_confident 2.0 --dropout 0.5 --use_SPL False
-        --mode_criterion CE $LAMBDA"
+        $LAMBDA"
 case "$METHOD" in
     sup)      SCRIPT=CCVC_no_aug.py; FLAGS="--use_con False --use_dis False --w_con 0 --w_dis 0 --use_MLP False --mode_confident no" ;;
     sup_pure) SCRIPT=CCVC_no_aug.py; FLAGS="--use_con False --use_dis False --w_con 0 --w_dis 0 --use_MLP False --mode_confident no --sup_pure True" ;;
     ccr)      SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis False --use_MLP False --mode_confident no" ;;
     cvc)      SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis True --use_MLP True --use_norm True --use_dropout True --mode_confident no" ;;
     ccvc)     SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis True --use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
-    ccvc_aug) SCRIPT=CCVC_aug.py;    FLAGS="--use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
+    ccvc_aug) SCRIPT=CCVC_aug.py;    FLAGS="--mode_criterion CE --use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
     *) die "METHOD='$METHOD' is not a preset (sup | sup_pure | ccr | cvc | ccvc | ccvc_aug)" ;;
 esac
 

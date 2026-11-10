@@ -41,7 +41,7 @@ def run_dirs(exp_root):
     for dirpath, dirnames, filenames in os.walk(exp_root):
         dirnames[:] = [d for d in dirnames if d != 'trial' and '_old_' not in d]
         if 'config.json' in filenames:
-            out.append(os.path.relpath(dirpath, exp_root))
+            out.append(os.path.relpath(dirpath, exp_root).replace(os.sep, '/'))
             dirnames[:] = []
     return out
 
