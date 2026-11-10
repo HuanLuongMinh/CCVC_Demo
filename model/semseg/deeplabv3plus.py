@@ -141,16 +141,20 @@ class Discrepancy_DeepLabV3Plus(nn.Module):
         else:
             self.branch1 = DeepLabV3Plus(args, cfg)
         self.branch2 = DeepLabV3Plus(args, cfg, use_MLP=args.use_MLP)
+        self.use_amp = getattr(args, 'amp', False)
 
     def forward(self, x):
         logits = {}
 
-        feature1, pred1 = self.branch1(x)
-        feature2, pred2 = self.branch2(x)
-        
-        logits['pred1'] = pred1
-        logits['feature1'] = feature1
-        logits['pred2'] = pred2
-        logits['feature2'] = feature2
+        # mixed precision (T4, 16 GB): only the forward runs in fp16; the outputs are cast back
+        # to fp32 so that every loss is computed exactly as upstream
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_amp and x.is_cuda):
+            feature1, pred1 = self.branch1(x)
+            feature2, pred2 = self.branch2(x)
+
+        logits['pred1'] = pred1.float()
+        logits['feature1'] = feature1.float()
+        logits['pred2'] = pred2.float()
+        logits['feature2'] = feature2.float()
         
         return logits

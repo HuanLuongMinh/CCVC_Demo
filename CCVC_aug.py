@@ -69,6 +69,7 @@ parser.add_argument('--num_workers', default=2, type=int)                       
 # ddp settings
 parser.add_argument('--gpus', default=torch.cuda.device_count(), type=int, help='number of gpus per node')
 parser.add_argument('--device', default='cuda', type=str, choices=['cuda', 'cpu'])  # cpu: tests only
+parser.add_argument('--amp', default=True, type=str2bool)                       # mixed precision (deviation from paper, see README_OEM)
 parser.add_argument('--nodes', default=1, type=int, help='number of nodes')
 parser.add_argument("--ddp", default=True, type=str2bool, help='distributed data parallel training or not')
 # network settings
@@ -130,7 +131,9 @@ def main(gpu, ngpus_per_node, cfg, args):
     torch.cuda.manual_seed_all(args.seed)
     torch.backends.cudnn.benchmark = True
 
+    args.amp = args.amp and args.device.type == 'cuda'
     model = Discrepancy_DeepLabV3Plus(args, cfg)
+    scaler = torch.amp.GradScaler('cuda', enabled=args.amp)
     if args.local_rank <= 0:
         logger.info('Total params: {:.1f}M\n'.format(count_params(model)))
 
@@ -472,8 +475,9 @@ def main(gpu, ngpus_per_node, cfg, args):
 
             barrier(args)
 
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item()
             total_loss_CE += loss_CE.item()
