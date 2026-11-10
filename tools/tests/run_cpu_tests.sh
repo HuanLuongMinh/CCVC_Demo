@@ -206,6 +206,22 @@ $PY tools/restore_output.py --restore_dir auto --search_root "$W/prev_input" --o
 check "differing partition stops the restore (exit 2)" test $? -eq 2
 check "RESTORE_DIR=none does nothing" bash -c "$PY tools/restore_output.py --restore_dir none --out_root '$NEW/exp/oem' --part_root '$NEW/partitions/oem' | grep -q 'nothing to restore'"
 
+section "15. CC mask of the CutMix pass (--cc_mask_mixed)"
+# With REAL_PRETRAINED_DIR (real UniMatch resnet101.pth) the predictions vary in space, so the masks of the
+# pasted and the own image differ inside the box and the check must tell both behaviours apart.
+REQ=""; PRE=""
+if [[ -n "${REAL_PRETRAINED_DIR:-}" ]]; then REQ="--require_differ"; PRE="$REAL_PRETRAINED_DIR"; fi
+for mode in True False; do
+    expect=mixed; [[ $mode == False ]] && expect=upstream
+    # gamma = 0 so that every conflicting pixel is CC; dump at iteration 10, when the (randomly initialised)
+    # heads already give image-dependent predictions, otherwise both images conflict everywhere
+    SPLIT=1_4 SEED=5 TRIAL=1 TRIAL_ITERS=11 EPOCHS=3 PRETRAINED_DIR="$PRE" EXTRA="--crop_size 128 --log_every 2 --conf_threshold 0.0 --cc_mask_mixed $mode --debug_dump_cc $W/cc_$mode.pth --debug_dump_cc_iter 10" run
+    check "aug run with --cc_mask_mixed $mode (exit 0)" test $? -eq 0
+    $PY tools/tests/check_cc_mask.py "$W/cc_$mode.pth" --expect $expect $REQ > "$W/cc_$mode.log" 2>&1
+    check "CC mask follows the $expect behaviour inside the CutMix box" test $? -eq 0
+    cat "$W/cc_$mode.log"
+done
+
 echo
 echo "================ $PASSES passed, $FAILS failed ================"
 exit $FAILS
