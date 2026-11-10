@@ -3,7 +3,7 @@
 Máy: Windows 11, Python 3.12.9, PyTorch 2.13.0+cpu. Lệnh: `bash tools/tests/run_cpu_tests.sh <thư mục tạm>`
 Dữ liệu giả lập: 16 ảnh train và 4 ảnh val `.tif` (cạnh 192, một số ảnh 144), nhãn 0..8, file `.pth` giả đúng key deep-stem. Thông số chạy: ResNet-101 thật, crop 64, `EPOCHS=1–3`, `EVAL_EVERY=1`, `--log_every 2`.
 
-**Kết quả: 62 đạt / 0 lỗi** (lần chạy cuối). Lần chạy đầu có 8 lỗi, tất cả cùng một nguyên nhân: `run_baseline.sh` truyền `--mode_criterion` cho `CCVC_no_aug.py`, script này không có cờ đó. Đã sửa (chỉ truyền cho `ccvc_aug`) rồi chạy lại toàn bộ.
+**Kết quả: 66 đạt / 0 lỗi** (lần chạy cuối, có mục 15; lệnh: `REAL_PRETRAINED_DIR=D:/Claude/models bash tools/tests/run_cpu_tests.sh <thư mục tạm>`). Lần chạy đầu có 8 lỗi, tất cả cùng một nguyên nhân: `run_baseline.sh` truyền `--mode_criterion` cho `CCVC_no_aug.py`, script này không có cờ đó. Đã sửa (chỉ truyền cho `ccvc_aug`) rồi chạy lại toàn bộ.
 
 | Mục spec 8.1 | Kiểm tra | Kết quả |
 |---|---|---|
@@ -19,9 +19,12 @@ Dữ liệu giả lập: 16 ảnh train và 4 ảnh val `.tif` (cạnh 192, mộ
 | 10 | `collect_results.py`: 7 dòng = 7 lần chạy đã xong (bỏ `trial/` và `_old_`) | ✅ |
 | thêm | Panel 5 cột: mỗi lần eval một file, cùng 4 ảnh val; `plot_run.py` vẽ lại đủ 6 biểu đồ; `pseudo_label_dist.csv` có dòng mốc + 2 dòng mỗi lần eval, mỗi dòng cộng lại = 100%; `confidence_reliability.csv` có 1 dòng mỗi lần eval | ✅ |
 | thêm | `sup_pure`: không có ảnh không nhãn, tổng iteration bằng `sup` | ✅ |
+| 15 (thêm) | Mặt nạ CC của lượt CutMix (`--cc_mask_mixed`): đọc tensor do chính `CCVC_aug.py` dump ra ở iteration 10 (trọng số pretrain thật, γ = 0). Kiểm: dự đoán đã trộn = ảnh được dán vào trong hộp; nhãn giả đã trộn = argmax của dự đoán đã trộn. `True`: mặt nạ trong hộp = mặt nạ của **ảnh được dán vào**, ngoài hộp = của chính ảnh. `False`: = mặt nạ của ảnh chưa trộn ở mọi pixel (hành vi upstream). Mặt nạ của ảnh dán vào và của chính ảnh khác nhau ở 4988 / 522 pixel trong hộp, nên phép kiểm phân biệt được hai hành vi | ✅ |
+| thêm | Trial với `TRIAL_ITERS` = 1 hoặc lớn hơn tổng số iteration: vẫn kết thúc bằng eval và ghi report (trước đây lỗi) | ✅ |
 | thêm | Khôi phục output phiên trước: chép run đã xong và run đang dở, bỏ `trial/` và `_old_`; giữ bản local đi xa hơn; split khác nội dung → dừng (mã 2); `RESTORE_DIR=none` không làm gì | ✅ |
 
 Ghi chú:
+- Mục 15 dump ở iteration 10 chứ không phải iteration 0. Ở iteration 0, các head phân loại vừa khởi tạo ngẫu nhiên, mỗi nhánh gần như dự đoán một lớp hằng nên toàn ảnh đều "xung đột"; mặt nạ hai ảnh trùng nhau và phép kiểm không phân biệt được hai hành vi. Không có trọng số thật (`REAL_PRETRAINED_DIR`), phần kiểm độ nhạy chỉ in cảnh báo.
 - Mục 8 của spec đề xuất "đổi `LAMBDA_PRESET` → bị chặn". Nhưng mỗi preset λ khác `blended` có thư mục riêng (`<method>_<lambda>`), nên đổi λ là một lần chạy mới chứ không phải resume. Phép thử chặn dùng `EPOCHS` thay thế. λ (`w_CE/w_con/w_dis`) vẫn nằm trong danh sách khóa so sánh khi resume.
 - Panel và biểu đồ được kiểm bằng mắt. Mô hình mới train vài chục iteration trên dữ liệu ngẫu nhiên nên dự đoán còn đơn điệu và mIoU gần 0, điều này đúng như mong đợi.
 
