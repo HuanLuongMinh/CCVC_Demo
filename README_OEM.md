@@ -1,6 +1,6 @@
 # CCVC (CVPR 2023) trên OpenEarthMap — tái lập theo protocol Pascal VOC
 
-Fork của code chính thức [xiaoyao3302/CCVC](https://github.com/xiaoyao3302/CCVC) @ `274672cca69e9aec809b3f0ecd86ed9885d2a0a5` (xem `UPSTREAM_COMMIT`), chạy trên Kaggle 2×T4. Mỗi lần gọi chạy **đúng một split**; chạy split khác thì đổi biến `SPLIT` và gọi lại cùng script, kết quả không ghi đè lên nhau.
+Fork của code chính thức [xiaoyao3302/CCVC](https://github.com/xiaoyao3302/CCVC) @ `274672cca69e9aec809b3f0ecd86ed9885d2a0a5` (xem `UPSTREAM_COMMIT`), chạy trên Kaggle 2×T4. Mỗi lần gọi `bash run_baseline.sh split <x>` chạy **đúng một split**; chạy split khác thì đổi giá trị sau `split`, kết quả không ghi đè lên nhau.
 
 Hướng dẫn chạy từng bước (kèm xử lý lỗi): [HUONG_DAN_CHAY.md](HUONG_DAN_CHAY.md). Các cell Kaggle chi tiết: [KAGGLE_NOTEBOOK.md](KAGGLE_NOTEBOOK.md).
 
@@ -8,59 +8,64 @@ Hướng dẫn chạy từng bước (kèm xử lý lỗi): [HUONG_DAN_CHAY.md](
 
 ## 1. Chạy một split
 
+Mọi thứ chạy bằng **một file bash ở thư mục gốc repo**:
 ```bash
-bash tools/run_baseline.sh                      # dùng SPLIT ghi ở đầu file (mặc định 1_4)
-SPLIT=1_8 bash tools/run_baseline.sh            # ghi đè bất kỳ biến nào từ dòng lệnh
-SPLIT=1_8 TRIAL=1 bash tools/run_baseline.sh    # chạy thử ngắn trước (tùy chọn)
-SPLIT=full FULL_UNLABELED=none bash tools/run_baseline.sh
+bash run_baseline.sh split 1/4 --dryrun         # chạy thử: 300 iteration + 1 eval + trial_report.json
+bash run_baseline.sh split 1/4                  # chạy thật (80 epoch)
+bash run_baseline.sh split 1/8                  # lần sau: split khác
+bash run_baseline.sh split 1/4 --method sup_pure
+bash run_baseline.sh split full --full-unlabeled none
+bash run_baseline.sh -h                         # mọi tùy chọn
 ```
 
 Script tự làm theo thứ tự:
-1. Kiểm tra cấu hình. `SPLIT` rỗng, nhiều giá trị (dấu cách hoặc dấu phẩy) hay sai dạng thì báo lỗi.
-2. Khôi phục `exp/` và `partitions/` từ output phiên trước (mục 6).
-3. Tìm `resnet101.pth` dưới `/kaggle/input/model_lab*/`, link vào `pretrained/` và kiểm tra key (mục 5.4).
-4. Kiểm tra dữ liệu, tạo `data_report.json`, sinh split.
-5. Train trong một tiến trình riêng. Khi có 2 GPU thì dùng `mp.spawn`.
+1. Đọc tham số. Thiếu split, nhiều split (`split 1/4 1/8`), split sai dạng hay tùy chọn lạ thì báo lỗi.
+2. In thông tin môi trường (`tools/check_env.py`): GPU, dữ liệu, trọng số, output phiên trước.
+3. Khôi phục `exp/` và `partitions/` từ output phiên trước (mục 6).
+4. Tìm `resnet101.pth` dưới `/kaggle/input/model_lab*/`, link vào `pretrained/` và kiểm tra key (mục 5.4).
+5. Kiểm tra dữ liệu, tạo `data_report.json`, sinh split (`tools/prepare_oem.py`).
+6. Train trong một tiến trình riêng. Khi có 2 GPU thì dùng `mp.spawn`.
+7. In kết quả của lần chạy và bảng tổng hợp các split đã xong (`tools/show_results.py`).
 
 | Mã thoát | Ý nghĩa |
 |---|---|
-| 0 | Xong (hoặc split đã xong từ trước, hoặc trial xong) |
-| 3 | Dừng vì `MAX_SESSION_HOURS`. Lưu output, phiên sau chạy **lại đúng lệnh cũ** để resume |
-| 2 | Lỗi cấu hình, dữ liệu hoặc trọng số (thông báo ngay phía trên) |
+| 0 | Xong (hoặc split đã xong từ trước, hoặc chạy thử xong) |
+| 3 | Dừng vì `--max-session-hours`. Lưu output, phiên sau chạy **lại đúng lệnh cũ** để resume |
+| 2 | Lỗi tham số, dữ liệu hoặc trọng số (thông báo ngay phía trên) |
 | khác | Lỗi khi train (xem `run_*.log` trong thư mục chạy) |
 
-**Chạy split tiếp theo:** đổi `SPLIT` rồi gọi lại. Giữ nguyên `SPLIT_SEED` để các split lồng nhau (1/16 ⊂ 1/8 ⊂ 1/4 ⊂ 1/2). Split đã có `final_eval.json` sẽ được bỏ qua. Muốn chạy lại thì đặt `FORCE=1`; khi đó thư mục cũ được đổi tên thành `..._old_<thời gian>` chứ không bị xóa.
+**Chạy split tiếp theo:** đổi giá trị sau `split`. Giữ nguyên `--split-seed` (mặc định 0) để các split lồng nhau (1/16 ⊂ 1/8 ⊂ 1/4 ⊂ 1/2). Split đã có `final_eval.json` sẽ được bỏ qua (vẫn in kết quả). `--force` chạy lại; khi đó thư mục cũ được đổi tên thành `..._old_<thời gian>` chứ không bị xóa.
 
-Xem tổng hợp kết quả bất cứ lúc nào: `python tools/collect_results.py --out_root /kaggle/working/exp/oem` sinh ra `results_summary.csv`.
+## 2. Tùy chọn của `run_baseline.sh`
 
-## 2. Biến trong `tools/run_baseline.sh`
+| Tùy chọn | Biến môi trường tương đương | Mặc định | Ý nghĩa |
+|---|---|---|---|
+| `split <x>` | `SPLIT` | (bắt buộc) | `1/16`, `1/8`, `1/4`, `1/2`, `full` hoặc `n<số>` (số ảnh có nhãn). Viết `1_4` cũng được. Mỗi lần một giá trị |
+| `--dryrun` | `TRIAL=1` | tắt | Chạy `--trial-iters` iteration, eval 1 lần, ghi `trial_report.json` vào `.../trial/`; không để lại checkpoint |
+| `--trial-iters <n>` | `TRIAL_ITERS` | 300 | |
+| `--method <m>` | `METHOD` | `ccvc_aug` | `sup`, `sup_pure`, `ccr`, `cvc`, `ccvc`, `ccvc_aug` (mục 4) |
+| `--seed <n>` | `SEED` | 0 | Seed huấn luyện |
+| `--split-seed <n>` | `SPLIT_SEED` | 0 | Seed chia dữ liệu. **Giữ nguyên** giữa các lần chạy |
+| `--full-unlabeled <m>` | `FULL_UNLABELED` | `same` | Chỉ với `full`. `same`: tập không nhãn là chính ảnh train (bỏ nhãn). `none`: chỉ giám sát, tự dùng `sup_pure` |
+| `--import-labeled <file>` | `IMPORT_LABELED` | — | Danh sách ảnh có nhãn có sẵn (thư mục `<split>_imp<hash>_s<seed>`) |
+| `--epochs <n>` | `EPOCHS` | 80 | Theo paper (VOC). 1 epoch = 1 lượt qua tập không nhãn |
+| `--eval-every <n>` | `EVAL_EVERY` | 5 | Eval mỗi N epoch và ở epoch cuối |
+| `--batch-size <n>` | `BATCH_SIZE` | 2 | Ảnh mỗi GPU, mỗi loader. 2×T4 cho batch hiệu dụng 4 có nhãn + 4 không nhãn |
+| `--lambda <p>` | `LAMBDA_PRESET` | `blended` | `blended` = 2/2/1, `original` = 5/1/2, `readme_original` = 5/2/1 (w_CE/w_con/w_dis, mục 3.1) |
+| `--max-session-hours <h>` | `MAX_SESSION_HOURS` | 11.25 | Quá mốc: chạy xong epoch hiện tại, lưu `last.pth`, thoát mã 3 |
+| `--force` | `FORCE=1` | tắt | Chạy lại split đã xong (thư mục cũ được đổi tên) |
+| `--data-root <dir>` | `DATA_ROOT` | tự tìm | Thư mục có `images/{train,val}` và `label/{train,val}` dưới `/kaggle/input` |
+| `--pretrained-dir <dir>` | `PRETRAINED_DIR` | tự tìm | Thư mục chứa `resnet101.pth` (mặc định `/kaggle/input/model_lab*`) |
+| `--restore-dir <d>` | `RESTORE_DIR` | `auto` | `auto`: tự tìm output phiên trước dưới `/kaggle/input`; hoặc một đường dẫn; hoặc `none` |
+| `--out-root <dir>` | `OUT_ROOT` | `/kaggle/working/exp/oem` | Thư mục kết quả |
+| `--part-root <dir>` | `PART_ROOT` | `/kaggle/working/partitions/oem` | Thư mục chứa các split |
+| `--extra "<args>"` | `EXTRA` | — | Tham số thêm cho script train, ví dụ `--extra "--log_every 100"` |
+| — | `NUM_WORKERS` | 2 | Số worker DataLoader cho mỗi GPU |
+| — | `SESSION_START` | lúc gọi script | Thời điểm bắt đầu phiên (unix time) cho `--max-session-hours` |
 
-| Biến | Mặc định | Ý nghĩa |
-|---|---|---|
-| `SPLIT` | `1_4` | `1_16`, `1_8`, `1_4`, `1_2`, `full` hoặc `n<số>` (số ảnh có nhãn). Mỗi lần gọi một giá trị |
-| `TRIAL` | `0` | `1` = chạy `TRIAL_ITERS` iteration, eval 1 lần, ghi `trial_report.json` vào `.../trial/` |
-| `TRIAL_ITERS` | `300` | Số iteration của lần chạy thử |
-| `METHOD` | `ccvc_aug` | `sup`, `sup_pure`, `ccr`, `cvc`, `ccvc`, `ccvc_aug` (mục 4) |
-| `SEED` | `0` | Seed huấn luyện |
-| `SPLIT_SEED` | `0` | Seed chia dữ liệu. **Giữ nguyên** giữa các lần chạy để split lồng nhau |
-| `FULL_UNLABELED` | `same` | Chỉ dùng với `full`. `same`: tập không nhãn là chính ảnh train (bỏ nhãn). `none`: chỉ giám sát, tự chuyển sang `sup_pure` |
-| `IMPORT_LABELED` | trống | File danh sách ảnh có nhãn có sẵn (thư mục `<split>_imp<hash>_s<seed>`) |
-| `EPOCHS` | `80` | Theo paper (VOC). 1 epoch = 1 lượt qua tập không nhãn |
-| `EVAL_EVERY` | `5` | Eval mỗi N epoch và ở epoch cuối |
-| `BATCH_SIZE` | `2` | Ảnh mỗi GPU, mỗi loader. 2×T4 cho batch hiệu dụng 4 có nhãn + 4 không nhãn |
-| `LAMBDA_PRESET` | `blended` | `blended` = 2/2/1, `original` = 5/1/2, `readme_original` = 5/2/1 (w_CE/w_con/w_dis, mục 3.1) |
-| `DATA_ROOT` | trống | Trống thì tự tìm thư mục có `images/{train,val}` và `label/{train,val}` dưới `/kaggle/input` |
-| `PRETRAINED_DIR` | trống | Trống thì tìm `resnet101.pth` dưới `/kaggle/input/model_lab*` |
-| `OUT_ROOT` | `/kaggle/working/exp/oem` | Thư mục kết quả |
-| `PART_ROOT` | `/kaggle/working/partitions/oem` | Thư mục chứa các split |
-| `RESTORE_DIR` | `auto` | `auto`: tự tìm output phiên trước dưới `/kaggle/input`. Hoặc một đường dẫn, hoặc `none` |
-| `MAX_SESSION_HOURS` | `11.25` | Quá mốc này thì chạy xong epoch hiện tại, lưu `last.pth` rồi thoát mã 3 |
-| `NUM_WORKERS` | `2` | Số worker DataLoader cho mỗi GPU |
-| `FORCE` | `0` | `1`: chạy lại split đã xong (thư mục cũ được đổi tên) |
-| `EXTRA` | trống | Tham số thêm cho script train, ví dụ `EXTRA="--log_every 100"` |
-| `SESSION_START` | lúc gọi script | Thời điểm bắt đầu phiên (unix time). Nên đặt ở cell đầu notebook để tính cả thời gian chuẩn bị |
+Tham số dòng lệnh được ưu tiên hơn biến môi trường. Thư mục một lần chạy: `$OUT_ROOT/<split>_s<split-seed>/<method>[_<lambda nếu khác blended>]/seed<seed>/` (ví dụ `split 1/4` → `1_4_s0/ccvc_aug/seed0/`). Với `full` là `full_same_s0/` hoặc `full_none_s0/`. Chạy thử nằm thêm trong `trial/`.
 
-Thư mục một lần chạy: `$OUT_ROOT/<split>_s<SPLIT_SEED>/<method>[_<lambda nếu khác blended>]/seed<SEED>/`. Với `full` là `full_same_s0/` hoặc `full_none_s0/`. Chạy thử nằm thêm trong `trial/`.
+Xem lại kết quả mà không cần train: `python tools/show_results.py --run_dir <thư mục chạy>`, `python tools/collect_results.py --out_root /kaggle/working/exp/oem`, `python tools/plot_run.py <thư mục chạy>`.
 
 ## 3. Cấu hình
 
@@ -82,7 +87,7 @@ Thư mục một lần chạy: `$OUT_ROOT/<split>_s<SPLIT_SEED>/<method>[_<lambd
 
 Lý do chọn λ blended: tỉ lệ không nhãn : có nhãn của OEM (15.1 / 7.0 / 3.0 : 1 ở 1/16, 1/8, 1/4) gần với VOC blended hơn VOC original (114/57/28 : 1).
 
-**λ và README upstream không khớp nhau.** README upstream chạy VOC original với `--w_CE 5.0 --w_con 2.0 --w_dis 1.0`, tức tráo λ2/λ3 so với paper (5/1/2). Repo này theo paper. Preset `LAMBDA_PRESET=readme_original` (5/2/1) chỉ để đối chiếu, không dùng làm mặc định.
+**λ và README upstream không khớp nhau.** README upstream chạy VOC original với `--w_CE 5.0 --w_con 2.0 --w_dis 1.0`, tức tráo λ2/λ3 so với paper (5/1/2). Repo này theo paper. Preset `--lambda readme_original` (5/2/1) chỉ để đối chiếu, không dùng làm mặc định.
 
 ### 3.2 Giá trị paper không nói, lấy theo code upstream
 | Thành phần | Giá trị |
@@ -117,7 +122,7 @@ Không tự giảm crop, backbone hay batch. Nếu OOM khi train với AMP và b
 7. **Mặt nạ CC của lượt strong (CutMix) trong `CCVC_aug.py`** — cờ `--cc_mask_mixed` (mặc định `True`).
    - **Lỗi upstream:** mặt nạ pixel "xung đột và tự tin" (nhân ω_c) được tính trên dự đoán của ảnh **chưa CutMix** (`unlabeled_pred1/2`), nhưng lại áp lên loss của nhãn giả **đã CutMix** (`aug_unlabeled_pseudo_label*_for_mix`). Bên trong hộp CutMix (2–40% diện tích ảnh, ở mọi batch), ω_c vì thế rơi vào sai pixel. Mode `normal` của chính upstream thì dùng đúng bản đã CutMix.
    - **Sửa:** mặt nạ CC của lượt strong được tính trên `aug_unlabeled_pred*_for_mix`, cùng nguồn với nhãn giả đã CutMix. Confidence là xác suất softmax, khớp `--conf_prob`. Bên trong hộp, mặt nạ bây giờ theo dự đoán của ảnh được dán vào. Lượt weak (`raw`) giữ nguyên vì không có CutMix. Thống kê `conflict_ratio`/`cc_ratio` trong `train_log.csv` vẫn tính trên nhãn giả của lượt 1 (chưa trộn).
-   - **Quay về hành vi upstream:** `EXTRA="--cc_mask_mixed False"` (thư mục chạy vẫn là `ccvc_aug`, nên dùng `SEED` hoặc `OUT_ROOT` khác để không resume nhầm; giá trị cờ được ghi trong `config.json` và resume bị chặn nếu khác).
+   - **Quay về hành vi upstream:** `bash run_baseline.sh split 1/4 --extra "--cc_mask_mixed False" --seed 1` (thư mục chạy vẫn là `ccvc_aug`, nên dùng `--seed` hoặc `--out-root` khác để không resume nhầm; giá trị cờ được ghi trong `config.json` và resume bị chặn nếu khác).
    - Kiểm thử: `tools/tests/check_cc_mask.py` đọc tensor do script dump ra ở iteration đầu (`--debug_dump_cc`) và xác nhận mặt nạ bên trong hộp khớp với ảnh được dán vào (mục 15 của `run_cpu_tests.sh`).
 8. (thêm) Chạy được với 1 GPU. Upstream gọi `dist.barrier()` hay `model.module` khi không có DDP, và khi `sampler=None` thì 1 GPU không xáo trộn dữ liệu.
 9. (thêm) `len(trainloader_u) // 8` bằng 0 khi tập nhỏ.
@@ -151,7 +156,7 @@ Kaggle `aletbm/global-land-cover-mapping-openearthmap`: `images/{train,val}/*.ti
 Nhãn: 0 'unknown' → 255 (ignore); 1..8 → 0..7 = Bareland, Rangeland, Developed space, Road, Tree, Water, Agriculture land, Building.
 
 ### 5.2 Split (`tools/prepare_oem.py`)
-k = floor(N / mẫu số). Ảnh có nhãn là k ảnh đầu của một hoán vị cố định sinh từ `SPLIT_SEED`, nên các split lồng nhau dù chạy ở các lần khác nhau. Phần còn lại là ảnh không nhãn. Với N = 2303:
+k = floor(N / mẫu số). Ảnh có nhãn là k ảnh đầu của một hoán vị cố định sinh từ `--split-seed`, nên các split lồng nhau dù chạy ở các lần khác nhau. Phần còn lại là ảnh không nhãn. Với N = 2303:
 
 | Split | Có nhãn | Không nhãn | Iter/epoch (2×T4) | Eval mỗi … iter | Tổng iter (80 epoch) |
 |---|---|---|---|---|---|
@@ -166,7 +171,7 @@ Iter/epoch = `len(trainloader_u)` = floor(ceil(U/2)/2) (DistributedSampler + dro
 ### 5.3 Lưu ý về `full`
 - **Khác dòng "Full" của paper:** trên VOC, paper vẫn còn 9.118 ảnh SBD làm dữ liệu không nhãn. Ở OEM, `same` dùng lại chính ảnh train (bỏ nhãn) làm không nhãn; `none` chỉ giám sát.
 - Với `full`, N_labeled = N_train. Vì vậy 1 epoch (theo tập không nhãn ở `same`, hoặc theo tập có nhãn nhân bản ở `none`/`sup_pure`) **trùng với "1 lượt qua tập có nhãn"**. `full/same` và `full/none` có cùng iter/epoch và cùng tổng iteration. Script in hai con số này khi bắt đầu, và chúng cũng có trong `config.json`.
-- `full` + `FULL_UNLABELED=none` tự dùng `sup_pure`.
+- `split full --full-unlabeled none` tự dùng `sup_pure`.
 
 ### 5.4 Trọng số pretrain
 `resnet101.pth` của UniMatch/CCVC (deep stem), **không phải** torchvision. Script dừng và liệt kê đúng từng key lỗi khi:
@@ -179,9 +184,9 @@ Riêng ngưỡng 95% của spec thì không đủ: state_dict torchvision khớp
 ## 6. Nhiều phiên Kaggle, resume
 - `last.pth` được ghi đè cuối mỗi epoch (model, optimizer, GradScaler, epoch, iteration, RNG của mọi GPU). Cách ghi: ghi `last.pth.tmp`, fsync, rồi đổi tên. Kèm theo là `progress.json`.
 - Thứ tự trong một epoch là train → eval (nếu đến lượt) → checkpoint, nên resume không bỏ sót lần eval nào.
-- Resume tự động khi có `last.pth`. Resume bị **chặn** nếu một tham số ảnh hưởng huấn luyện khác với `config.json` (split, method, λ, epochs, batch, crop, lr, số ảnh, số GPU…); thông báo liệt kê từng khác biệt. `MAX_SESSION_HOURS`, `EVAL_EVERY` và `NUM_WORKERS` được phép đổi.
-- `MAX_SESSION_HOURS=11.25`: khi vượt mốc, chạy xong epoch hiện tại, lưu, thoát mã 3. Nếu một epoch cộng eval mất lâu hơn 45 phút còn lại trước mốc 12 giờ của Kaggle, script in cảnh báo.
-- `RESTORE_DIR=auto`: tìm output phiên trước dưới `/kaggle/input`. Mỗi lần chạy lấy bản đi xa nhất; không bao giờ đè lên bản local đi xa hơn. Split khác nội dung thì dừng.
+- Resume tự động khi có `last.pth`. Resume bị **chặn** nếu một tham số ảnh hưởng huấn luyện khác với `config.json` (split, method, λ, epochs, batch, crop, lr, số ảnh, số GPU…); thông báo liệt kê từng khác biệt. `--max-session-hours`, `--eval-every` và `NUM_WORKERS` được phép đổi.
+- `--max-session-hours` (mặc định 11.25): khi vượt mốc, chạy xong epoch hiện tại, lưu, thoát mã 3. Nếu một epoch cộng eval mất lâu hơn 45 phút còn lại trước mốc 12 giờ của Kaggle, script in cảnh báo.
+- `--restore-dir auto` (mặc định): tìm output phiên trước dưới `/kaggle/input`. Mỗi lần chạy lấy bản đi xa nhất; không bao giờ đè lên bản local đi xa hơn. Split khác nội dung thì dừng.
 
 ## 7. Đầu ra mỗi lần chạy
 | File | Nội dung |
