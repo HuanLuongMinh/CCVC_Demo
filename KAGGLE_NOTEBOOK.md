@@ -1,70 +1,103 @@
-# Chạy trên Kaggle (2×T4) — các cell mẫu
+# Chạy trên Kaggle — đủ các cell, bắt đầu từ `git clone`
 
-Mỗi phiên chạy **một split**. Code lấy bằng `git clone` từ repo public của bạn. Kết quả nằm dưới `/kaggle/working`; để dùng tiếp ở phiên sau, add output đó làm input.
+Có sẵn notebook cùng nội dung: **`kaggle_run.ipynb`** (Kaggle → File → Import Notebook → chọn file này, hoặc tạo notebook mới rồi dán lần lượt các cell dưới đây). Hướng dẫn chi tiết từng bước và xử lý lỗi: [HUONG_DAN_CHAY.md](HUONG_DAN_CHAY.md).
 
-## 0. Thiết lập notebook (một lần)
-- **Accelerator:** GPU T4 ×2. **Internet:** On (cần để `git clone`).
-- **Add Data:**
-  1. `aletbm/global-land-cover-mapping-openearthmap` (OEM)
-  2. `model_lab` (dataset của bạn, chứa `resnet101.pth`)
-  3. *(từ phiên thứ 2 trở đi)* output của version notebook trước: Add Data → Your Work → Notebooks → chọn notebook này → version gần nhất. Output được mount dưới `/kaggle/input/<tên>/` và `run_baseline.sh` sẽ tự khôi phục từ đó.
+# CCVC trên OpenEarthMap — chạy một split
 
-## 1. Ghi giờ bắt đầu phiên + lấy code
+**Thiết lập notebook (một lần):**
+- Settings → **Accelerator: GPU T4 ×2**, **Internet: On**.
+- Add Data: `aletbm/global-land-cover-mapping-openearthmap` (OEM) và `model_lab` (chứa `resnet101.pth`).
+- Từ phiên thứ 2 của cùng một split: Add Data → Your Work → Notebooks → **output version trước của notebook này** (để resume).
+
+**Mỗi lần chạy:** chỉ sửa Cell 1, rồi Run All (hoặc Save Version → Save & Run All).
+
+## Cell 1 — Cấu hình (chỉ sửa ở đây)
+
 ```python
 import os, time
-os.environ['SESSION_START'] = str(int(time.time()))   # để MAX_SESSION_HOURS tính cả thời gian chuẩn bị
-```
-```python
-REPO = 'https://github.com/<user>/<repo>.git'          # repo public của bạn
-!test -d /kaggle/working/CCVC-Origin || git clone -q $REPO /kaggle/working/CCVC-Origin
-!git -C /kaggle/working/CCVC-Origin pull -q
-%cd /kaggle/working/CCVC-Origin
-!git rev-parse HEAD
+os.environ['SESSION_START'] = str(int(time.time()))     # tính giới hạn 11.25 h từ đầu phiên
+
+REPO_URL  = 'https://github.com/<user>/<repo>.git'     # repo public của bạn
+REPO_DIR  = '/kaggle/working/CCVC-Origin'
+
+SPLIT          = '1_4'        # 1_16 | 1_8 | 1_4 | 1_2 | full | n<số>   — MỘT split mỗi lần
+TRIAL          = 0            # 1 = chạy thử ngắn (300 iter + 1 eval); 0 = chạy đầy đủ
+METHOD         = 'ccvc_aug'   # ccvc_aug | sup_pure | sup | ccr | cvc | ccvc
+FULL_UNLABELED = 'same'       # chỉ khi SPLIT='full': same | none (none -> sup_pure)
+LAMBDA_PRESET  = 'blended'    # blended (2/2/1) | original (5/1/2) | readme_original (5/2/1)
+SEED           = 0
+SPLIT_SEED     = 0            # KHÔNG đổi giữa các lần chạy (split lồng nhau)
+EXTRA_ENV      = {}           # biến khác của run_baseline.sh, ví dụ {'MAX_SESSION_HOURS': '10.5', 'FORCE': '1'}
 ```
 
-## 2. Kiểm tra môi trường (tùy chọn)
+## Cell 2 — Lấy code (clone lần đầu, pull các lần sau)
+
 ```python
-!nvidia-smi --query-gpu=name,memory.total --format=csv
-!python -c "import torch; print(torch.__version__, torch.cuda.device_count())"
-!find /kaggle/input -maxdepth 4 -type d -name label          # thư mục dữ liệu OEM
-!find /kaggle/input -maxdepth 4 -name resnet101.pth         # trọng số
-```
-Kiểm tra loader trên dữ liệu thật. Đổi đường dẫn thành thư mục cha của `label/` tìm được ở trên:
-```python
-!python tools/tests/check_loader_real.py --data_root /kaggle/input/<thư mục OEM>
+!test -d {REPO_DIR} || git clone -q {REPO_URL} {REPO_DIR}
+!git -C {REPO_DIR} pull -q
+%cd {REPO_DIR}
+!git log --oneline -1
 ```
 
-## 3. Chạy thử (tùy chọn, khuyến nghị cho split đầu tiên)
-```python
-!SPLIT=1_4 TRIAL=1 bash tools/run_baseline.sh
-```
-Lệnh in bảng tóm tắt và ghi `/kaggle/working/exp/oem/1_4_s0/ccvc_aug/seed0/trial/trial_report.json`. Bảng gồm s/iter, bộ nhớ đỉnh mỗi GPU, thời gian eval, số giờ và số phiên dự kiến. Chạy thử không để lại checkpoint.
+## Cell 3 — Kiểm tra môi trường
 
-## 4. Chạy đầy đủ một split
 ```python
-!SPLIT=1_4 bash tools/run_baseline.sh
+!nvidia-smi --query-gpu=index,name,memory.total --format=csv
+!python -c "import torch; print('torch', torch.__version__, '| GPUs:', torch.cuda.device_count())"
+print('--- dữ liệu OEM (thư mục label/):')
+!find /kaggle/input -maxdepth 5 -type d -name label 2>/dev/null
+print('--- trọng số:')
+!find /kaggle/input -maxdepth 5 -name resnet101.pth 2>/dev/null
+print('--- output phiên trước (nếu có):')
+!find /kaggle/input -maxdepth 4 -type d -path '*exp/oem' 2>/dev/null
 ```
-- Dùng `!` để chạy trong **tiến trình riêng**; không gọi `python CCVC_aug.py` trực tiếp trong cell.
-- Khi bắt đầu, script in iter/epoch, tổng iteration và ước tính số phiên Kaggle.
-- Khi quá `MAX_SESSION_HOURS` (11.25 giờ), script chạy xong epoch hiện tại, lưu `last.pth` rồi dừng ("STOPPED FOR RESUME"). Phiên sau chạy **lại đúng lệnh này**.
-- Split khác: đổi `SPLIT` (ví dụ `SPLIT=1_8`). Không đổi `SPLIT_SEED`.
-- Split đã xong thì script báo "split này đã chạy xong" và bỏ qua; `FORCE=1` để chạy lại (thư mục cũ được đổi tên, không xóa).
 
-## 5. Xem kết quả
+## Cell 4 — Chạy (một split)
+
 ```python
-!python tools/collect_results.py --out_root /kaggle/working/exp/oem
+import subprocess
+env = dict(os.environ, SPLIT=str(SPLIT), TRIAL=str(TRIAL), METHOD=METHOD, FULL_UNLABELED=FULL_UNLABELED,
+           LAMBDA_PRESET=LAMBDA_PRESET, SEED=str(SEED), SPLIT_SEED=str(SPLIT_SEED),
+           **{k: str(v) for k, v in EXTRA_ENV.items()})
+proc = subprocess.Popen(['bash', 'tools/run_baseline.sh'], cwd=REPO_DIR, env=env,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+for line in proc.stdout:
+    if 'Warning' not in line and 'warn(' not in line:
+        print(line, end='')
+RC = proc.wait()
+print('\n' + {0: 'EXIT 0: xong (hoặc split đã xong trước đó / trial xong)',
+              3: 'EXIT 3: hết giờ phiên, đã lưu last.pth -> Save Version, phiên sau add output này và chạy lại y hệt',
+              }.get(RC, 'EXIT %d: LỖI - xem log phía trên và run_*.log trong thư mục chạy' % RC))
 ```
+
+## Cell 5 — Kết quả
+
 ```python
+import glob, json
 from IPython.display import Image, display
-import glob
-run = '/kaggle/working/exp/oem/1_4_s0/ccvc_aug/seed0'
-for p in sorted(glob.glob(run + '/plots/*.png')): display(Image(p))
-display(Image(sorted(glob.glob(run + '/vis/*.png'))[-1]))      # panel của lần eval mới nhất
-```
-Vẽ lại biểu đồ bất cứ lúc nào: `!python tools/plot_run.py <run_dir>`.
+!python tools/collect_results.py --out_root /kaggle/working/exp/oem
 
-## 6. Lưu kết quả để dùng ở phiên sau
-- **Khuyến nghị:** **Save Version → Save & Run All (Commit)**. Kaggle chạy lại toàn bộ notebook ở chế độ nền (tối đa 12 giờ), rồi lưu toàn bộ `/kaggle/working` (gồm `exp/` và `partitions/`) thành output của version đó.
-- Phiên sau: add output version vừa rồi làm input (mục 0.3), rồi chạy lại cùng các cell. `run_baseline.sh` tự chép `exp/` và `partitions/` về `/kaggle/working` (`RESTORE_DIR=auto`) và resume.
-- Nếu chạy ở chế độ interactive, bạn phải tự lưu `/kaggle/working` trước khi phiên kết thúc. Hãy kiểm tra lại cách Kaggle hiện hành lưu output ở chế độ này.
-- **Dung lượng:** mỗi split chạy xong có `final.pth` khoảng 0.5 GB; split đang dở có thêm `last.pth` khoảng 1 GB. Giới hạn output khoảng 20 GB; xóa bớt split cũ nếu cần.
+method = 'sup_pure' if (SPLIT == 'full' and FULL_UNLABELED == 'none') else METHOD
+tag = f'full_{FULL_UNLABELED}_s{SPLIT_SEED}' if SPLIT == 'full' else f'{SPLIT}_s{SPLIT_SEED}'
+mdir = method if LAMBDA_PRESET == 'blended' else f'{method}_{LAMBDA_PRESET}'
+run = f'/kaggle/working/exp/oem/{tag}/{mdir}/seed{SEED}' + ('/trial' if TRIAL else '')
+print('run dir:', run)
+for f in ('final_eval.json', 'trial/trial_report.json' if not TRIAL else 'trial_report.json', 'progress.json'):
+    p = os.path.join(run, f)
+    if os.path.exists(p):
+        d = json.load(open(p))
+        print(f, '->', {k: d[k] for k in d if k in ('miou_b1', 'miou_b2', 'miou_ave', 'epochs_done', 'epochs',
+                                                   's_per_iter_median', 'projection')})
+for p in sorted(glob.glob(run + '/plots/*.png')):
+    display(Image(p))
+vis = sorted(glob.glob(run + '/vis/*.png'))
+if vis:
+    print('panel mới nhất:', os.path.basename(vis[-1]))
+    display(Image(vis[-1]))
+```
+
+## Sau khi chạy
+- **EXIT 3 (chưa xong):** Save Version (nếu đang chạy tương tác) → phiên sau: Add Data → output version vừa rồi → **không sửa Cell 1** → Run All. Script tự chép `exp/` + `partitions/` về và resume.
+- **EXIT 0 (xong):** đổi `SPLIT` ở Cell 1 cho split tiếp theo (vẫn add output cũ để giữ các split đã xong).
+- **Chạy nền 12 h:** Save Version → **Save & Run All (Commit)**; `/kaggle/working` thành output của version. Nhớ đặt `TRIAL = 0` trước khi commit.
+- Xử lý lỗi: xem `HUONG_DAN_CHAY.md`, bước 7.

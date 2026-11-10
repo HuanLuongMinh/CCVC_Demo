@@ -2,6 +2,8 @@
 
 Quy tắc chung: **mỗi lần chạy một split**, luôn bằng `bash tools/run_baseline.sh`. Chi tiết kỹ thuật nằm trong [README_OEM.md](README_OEM.md).
 
+**Cách nhanh nhất:** import notebook `kaggle_run.ipynb` vào Kaggle (File → Import Notebook). Notebook có đủ các cell từ `git clone` tới xem kết quả; mỗi lần chạy chỉ sửa Cell 1. Nội dung các cell cũng có trong [KAGGLE_NOTEBOOK.md](KAGGLE_NOTEBOOK.md).
+
 ---
 
 ## Bước 0 — Chuẩn bị (làm một lần)
