@@ -27,7 +27,7 @@ KAGGLE_SESSION_HOURS = 12.0
 # keys that must not change when resuming (anything that changes the optimisation)
 RESUME_KEYS = ['split', 'split_seed', 'full_unlabeled', 'method', 'script', 'lambda_preset', 'seed',
                'epochs', 'batch_size', 'crop_size', 'base_lr', 'lr_backbone', 'lr_network', 'mul_scheduler',
-               'w_CE', 'w_con', 'w_dis', 'w_confident', 'conf_threshold', 'conf_prob', 'mode_confident',
+               'w_CE', 'w_con', 'w_dis', 'w_confident', 'conf_threshold', 'conf_prob', 'cc_mask_mixed', 'mode_confident',
                'mode_mapping', 'use_MLP', 'use_norm', 'use_dropout', 'dropout', 'use_con', 'use_dis', 'sup_pure',
                'amp', 'world_size', 'backbone', 'n_labeled', 'n_unlabeled', 'n_val', 'iters_per_epoch',
                'labeled_list_sha1', 'unlabeled_list_sha1']
@@ -271,6 +271,7 @@ class RunContext(object):
             'lr_backbone': a.lr_backbone, 'lr_network': a.lr_network, 'mul_scheduler': a.mul_scheduler,
             'momentum': 0.9, 'weight_decay': 1e-4, 'w_CE': a.w_CE, 'w_con': a.w_con, 'w_dis': a.w_dis,
             'w_confident': a.w_confident, 'conf_threshold': a.conf_threshold, 'conf_prob': a.conf_prob,
+            'cc_mask_mixed': getattr(a, 'cc_mask_mixed', None),
             'mode_confident': a.mode_confident, 'mode_mapping': a.mode_mapping, 'use_MLP': a.use_MLP,
             'use_norm': a.use_norm, 'use_dropout': a.use_dropout, 'dropout': a.dropout,
             'use_con': getattr(a, 'use_con', True), 'use_dis': getattr(a, 'use_dis', True),

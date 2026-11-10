@@ -67,7 +67,7 @@ case "$METHOD" in
     ccr)      SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis False --use_MLP False --mode_confident no" ;;
     cvc)      SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis True --use_MLP True --use_norm True --use_dropout True --mode_confident no" ;;
     ccvc)     SCRIPT=CCVC_no_aug.py; FLAGS="--use_con True --use_dis True --use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
-    ccvc_aug) SCRIPT=CCVC_aug.py;    FLAGS="--mode_criterion CE --use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
+    ccvc_aug) SCRIPT=CCVC_aug.py;    FLAGS="--mode_criterion CE --cc_mask_mixed True --use_MLP True --use_norm True --use_dropout True --mode_confident vote_threshold" ;;
     *) die "METHOD='$METHOD' is not a preset (sup | sup_pure | ccr | cvc | ccvc | ccvc_aug)" ;;
 esac
 

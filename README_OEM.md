@@ -92,7 +92,7 @@ Lý do chọn λ blended: tỉ lệ không nhãn : có nhãn của OEM (15.1 / 7
 | Poly power | 0.9. lr được cập nhật sau mỗi `optimizer.step()` theo `base·(1−it/T)^0.9` |
 | BatchNorm | SyncBatchNorm khi DDP (2 GPU); BN thường khi 1 GPU |
 | L_dis | Đối xứng có `detach`: ½[(1+cos(f1.detach, f̄2)) + (1+cos(f̄2.detach, f1))], trên đặc trưng 304 kênh trước khối `fuse`, cho cả ảnh có nhãn và không nhãn |
-| CC | `vote_threshold_label_selection`: pixel xung đột mà nhánh tạo nhãn giả tự tin > γ thì nhân ω_c |
+| CC | `vote_threshold_label_selection`: pixel xung đột mà nhánh tạo nhãn giả tự tin > γ thì nhân ω_c. Ở lượt CutMix, mặt nạ tính trên dự đoán đã CutMix (sửa lỗi upstream, mục 3.4.7) |
 | `ccvc_aug` | Ảnh không nhãn đi qua 3 lượt forward: weak (eval, no_grad) sinh nhãn giả → strong + CutMix → weak (train) |
 | Tập có nhãn | Nhân bản cho bằng số ảnh không nhãn (`nsample`) |
 
@@ -114,9 +114,14 @@ Không tự giảm crop, backbone hay batch. Nếu OOM khi train với AMP và b
 4. Thêm dataset `oem` (đọc `.tif`, ánh xạ 0→255 và 1..8→0..7, **không đọc nhãn ảnh không nhãn**).
 5. Eval OEM: chế độ `original` (toàn ảnh) có AMP và `empty_cache()`; OOM thì chuyển hẳn sang `sliding_window` (cửa sổ 512, bước 2/3). Chế độ thực tế được ghi trong `eval_log.csv`.
 6. Đã rà chéo `CCVC_aug.py` và `CCVC_no_aug.py`: các sửa đổi áp dụng như nhau.
-7. (thêm) Chạy được với 1 GPU. Upstream gọi `dist.barrier()` hay `model.module` khi không có DDP, và khi `sampler=None` thì 1 GPU không xáo trộn dữ liệu.
-8. (thêm) `len(trainloader_u) // 8` bằng 0 khi tập nhỏ.
-9. (thêm) PyTorch 2.x: tensorboardX thành tùy chọn; `requirements.txt` đổi `sklearn` → `scikit-learn`.
+7. **Mặt nạ CC của lượt strong (CutMix) trong `CCVC_aug.py`** — cờ `--cc_mask_mixed` (mặc định `True`).
+   - **Lỗi upstream:** mặt nạ pixel "xung đột và tự tin" (nhân ω_c) được tính trên dự đoán của ảnh **chưa CutMix** (`unlabeled_pred1/2`), nhưng lại áp lên loss của nhãn giả **đã CutMix** (`aug_unlabeled_pseudo_label*_for_mix`). Bên trong hộp CutMix (2–40% diện tích ảnh, ở mọi batch), ω_c vì thế rơi vào sai pixel. Mode `normal` của chính upstream thì dùng đúng bản đã CutMix.
+   - **Sửa:** mặt nạ CC của lượt strong được tính trên `aug_unlabeled_pred*_for_mix`, cùng nguồn với nhãn giả đã CutMix. Confidence là xác suất softmax, khớp `--conf_prob`. Bên trong hộp, mặt nạ bây giờ theo dự đoán của ảnh được dán vào. Lượt weak (`raw`) giữ nguyên vì không có CutMix. Thống kê `conflict_ratio`/`cc_ratio` trong `train_log.csv` vẫn tính trên nhãn giả của lượt 1 (chưa trộn).
+   - **Quay về hành vi upstream:** `EXTRA="--cc_mask_mixed False"` (thư mục chạy vẫn là `ccvc_aug`, nên dùng `SEED` hoặc `OUT_ROOT` khác để không resume nhầm; giá trị cờ được ghi trong `config.json` và resume bị chặn nếu khác).
+   - Kiểm thử: `tools/tests/check_cc_mask.py` đọc tensor do script dump ra ở iteration đầu (`--debug_dump_cc`) và xác nhận mặt nạ bên trong hộp khớp với ảnh được dán vào (mục 15 của `run_cpu_tests.sh`).
+8. (thêm) Chạy được với 1 GPU. Upstream gọi `dist.barrier()` hay `model.module` khi không có DDP, và khi `sampler=None` thì 1 GPU không xáo trộn dữ liệu.
+9. (thêm) `len(trainloader_u) // 8` bằng 0 khi tập nhỏ.
+10. (thêm) PyTorch 2.x: tensorboardX thành tùy chọn; `requirements.txt` đổi `sklearn` → `scikit-learn`.
 
 ## 4. Phương pháp (`METHOD`)
 
