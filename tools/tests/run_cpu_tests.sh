@@ -16,7 +16,7 @@ section() { echo; echo "=== $* ==="; }
 
 export SEARCH_ROOT="$W/input" OUT_ROOT="$W/work/exp/oem" PART_ROOT="$W/work/partitions/oem" DEVICE=cpu \
        NUM_WORKERS=0 RESTORE_DIR=none EVAL_EVERY=1 EPOCHS=1 EXTRA="--crop_size 64 --log_every 2"
-run() { bash tools/run_baseline.sh > "$W/last_run.log" 2>&1; local rc=$?; grep -v "Warning\|warn(\|super().__init__" "$W/last_run.log" >> "$W/all_runs.log"; return $rc; }
+run() { bash run_baseline.sh > "$W/last_run.log" 2>&1; local rc=$?; grep -v "Warning\|warn(\|super().__init__" "$W/last_run.log" >> "$W/all_runs.log"; return $rc; }
 R() { echo "$OUT_ROOT/$1"; }     # run dir helper
 
 section "1. synthetic data + fake weights"
@@ -213,14 +213,33 @@ REQ=""; PRE=""
 if [[ -n "${REAL_PRETRAINED_DIR:-}" ]]; then REQ="--require_differ"; PRE="$REAL_PRETRAINED_DIR"; fi
 for mode in True False; do
     expect=mixed; [[ $mode == False ]] && expect=upstream
-    # gamma = 0 so that every conflicting pixel is CC; dump at iteration 10, when the (randomly initialised)
-    # heads already give image-dependent predictions, otherwise both images conflict everywhere
-    SPLIT=1_4 SEED=5 TRIAL=1 TRIAL_ITERS=11 EPOCHS=3 PRETRAINED_DIR="$PRE" EXTRA="--crop_size 128 --log_every 2 --conf_threshold 0.0 --cc_mask_mixed $mode --debug_dump_cc $W/cc_$mode.pth --debug_dump_cc_iter 10" run
+    # gamma = 0 so that every conflicting pixel is CC; dump iterations 10-14, when the (randomly initialised)
+    # heads already give image-dependent predictions; every dump must be correct, at least one must discriminate
+    SPLIT=1_4 SEED=5 TRIAL=1 TRIAL_ITERS=15 EPOCHS=3 PRETRAINED_DIR="$PRE" EXTRA="--crop_size 128 --log_every 2 --conf_threshold 0.0 --cc_mask_mixed $mode --debug_dump_cc $W/cc_$mode --debug_dump_cc_iter 10" run
     check "aug run with --cc_mask_mixed $mode (exit 0)" test $? -eq 0
-    $PY tools/tests/check_cc_mask.py "$W/cc_$mode.pth" --expect $expect $REQ > "$W/cc_$mode.log" 2>&1
+    $PY tools/tests/check_cc_mask.py "$W"/cc_${mode}_iter*.pth --expect $expect $REQ > "$W/cc_$mode.log" 2>&1
     check "CC mask follows the $expect behaviour inside the CutMix box" test $? -eq 0
     cat "$W/cc_$mode.log"
 done
+
+section "16. command line: bash run_baseline.sh split 1/8 [--dryrun] [options]"
+cli() { bash run_baseline.sh "$@" > "$W/last_run.log" 2>&1; local rc=$?; grep -v "Warning\|warn(\|super().__init__" "$W/last_run.log" >> "$W/all_runs.log"; return $rc; }
+cli; check "no split -> exit 2" test $? -eq 2
+check "message: missing split" grep -q "missing split" "$W/last_run.log"
+cli split 1/4 1/8; check "split 1/4 1/8 -> exit 2" test $? -eq 2
+check "message: only ONE split" grep -q "only ONE split" "$W/last_run.log"
+cli split 1/3; check "split 1/3 -> exit 2" test $? -eq 2
+cli split 1/8 --bogus; check "unknown option -> exit 2" test $? -eq 2
+cli split; check "split without value -> exit 2" test $? -eq 2
+cli -h; check "-h -> exit 0 + usage" bash -c "test $? -eq 0 && grep -q 'Usage: bash run_baseline.sh split' '$W/last_run.log'"
+cli split 1/8 --dryrun --trial-iters 2 --epochs 2 --eval-every 1 --seed 3 --extra "--crop_size 64 --log_every 2"
+check "split 1/8 --dryrun (exit 0)" test $? -eq 0
+check "dry run -> 1_8_s0/ccvc_aug/seed3/trial/trial_report.json" test -f "$(R 1_8_s0/ccvc_aug/seed3/trial)/trial_report.json"
+check "results printed at the end (TRIAL + summary table)" bash -c "grep -q 'RESULTS ' '$W/last_run.log' && grep -q 'TRIAL  mIoU b1' '$W/last_run.log' && grep -q 'finished run(s)' '$W/last_run.log'"
+cli split 1/8 --method sup_pure --epochs 1 --eval-every 1 --extra "--crop_size 64 --log_every 2"
+check "split 1/8 --method sup_pure (exit 0)" test $? -eq 0
+cli split 1/8 --method sup_pure --epochs 1
+check "finished split -> skipped, results shown" bash -c "test $? -eq 0 && grep -q 'đã chạy xong' '$W/last_run.log' && grep -q 'FINISHED' '$W/last_run.log'"
 
 echo
 echo "================ $PASSES passed, $FAILS failed ================"

@@ -84,8 +84,8 @@ parser.add_argument('--dropout', default=0.5, type=float)
 parser.add_argument('--conf_threshold', default=0.5, type=float)
 parser.add_argument('--conf_prob', default=True, type=str2bool)                 # True: gamma vs softmax prob (paper); False: vs raw logit (upstream)
 parser.add_argument('--cc_mask_mixed', default=True, type=str2bool)             # True: CC mask of the CutMix pass from the mixed predictions; False: upstream
-parser.add_argument('--debug_dump_cc', default='', type=str)                    # tests: save the CC tensors of one iteration to this file
-parser.add_argument('--debug_dump_cc_iter', default=0, type=int)                # tests: which iteration to dump
+parser.add_argument('--debug_dump_cc', default='', type=str)                    # tests: save the CC tensors to <this>_iter<N>.pth
+parser.add_argument('--debug_dump_cc_iter', default=0, type=int)                # tests: dump every iteration from this one on
 parser.add_argument('--mode_confident', default='no', type=str, choices=['normal', 'soft', 'vote', 'vote_threshold', 'vote_soft', 'no']) 
 parser.add_argument('--use_SPL', default=False, type=str2bool)
 parser.add_argument('--use_aug', default=True, type=str2bool)
@@ -108,7 +108,7 @@ parser.add_argument('--session_start', default=0.0, type=float)                 
 parser.add_argument('--log_every', default=50, type=int)                          # train_log.csv period (iterations)
 parser.add_argument('--vis_num', default=4, type=int)                             # fixed val images in the example panels
 parser.add_argument('--vis_seed', default=0, type=int)
-parser.add_argument('--run_meta', default='', type=str)                           # json written by tools/run_baseline.sh
+parser.add_argument('--run_meta', default='', type=str)                           # json written by run_baseline.sh
 
 args = parser.parse_args()
 
@@ -399,13 +399,13 @@ def main(gpu, ngpus_per_node, cfg, args):
                     cc_source1, cc_source2 = unlabeled_pred1, unlabeled_pred2
                 different1_confident, different1_else, different2_confident, different2_else = vote_threshold_label_selection(cc_source1, cc_source2, conf_threshold, use_prob=args.conf_prob)
 
-                if args.debug_dump_cc and epoch * iters_per_epoch + i == args.debug_dump_cc_iter and args.local_rank <= 0:
+                if args.debug_dump_cc and epoch * iters_per_epoch + i >= args.debug_dump_cc_iter and args.local_rank <= 0:
                     torch.save({'unlabeled_pred1': unlabeled_pred1.cpu(), 'unlabeled_pred2': unlabeled_pred2.cpu(),
                                 'mixed_pred1': aug_unlabeled_pred1_for_mix.cpu(), 'mixed_pred2': aug_unlabeled_pred2_for_mix.cpu(),
                                 'pseudo1_mixed': aug_unlabeled_pseudo_label1_for_mix.cpu(), 'pseudo2_mixed': aug_unlabeled_pseudo_label2_for_mix.cpu(),
                                 'cutmix_box': unlabeled_cutmix_box.cpu(), 'cc1': different1_confident.cpu(), 'cc2': different2_confident.cpu(),
                                 'gamma': conf_threshold, 'conf_prob': args.conf_prob, 'cc_mask_mixed': args.cc_mask_mixed},
-                               args.debug_dump_cc)
+                               '%s_iter%d.pth' % (args.debug_dump_cc, epoch * iters_per_epoch + i))
 
                 loss_con1_else = criterion_u(cutmixed_aug_unlabeled_pred2, aug_unlabeled_pseudo_label1_for_mix) * (different1_else & (aug_unlabeled_ignore_img_mask_for_mix != 255))
                 loss_con2_else = criterion_u(cutmixed_aug_unlabeled_pred1, aug_unlabeled_pseudo_label2_for_mix) * (different2_else & (aug_unlabeled_ignore_img_mask_for_mix != 255))
