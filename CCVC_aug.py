@@ -1,4 +1,6 @@
 import argparse
+import sys
+import time
 from copy import deepcopy
 import logging
 import os
@@ -28,9 +30,9 @@ import yaml
 from dataset.aug_semi2 import SemiDataset
 from model.semseg.deeplabv3plus import Discrepancy_DeepLabV3Plus
 from valid import evaluate
-from valid_save import evaluate_save
 from util.ohem import ProbOhemCrossEntropy2d
 from util.utils import count_params, init_log_save, vote_label_selection, soft_label_selection, vote_soft_label_selection, vote_threshold_label_selection
+from util.run_utils import RunContext, get_logger, count_lines, exit_code
 from util.dist_helper import setup_distributed, find_free_port, init_ddp, barrier, unwrap
 
 
@@ -95,6 +97,15 @@ parser.add_argument('--base_lr', default=0.001, type=float)
 parser.add_argument('--lr_network', default=5.0, type=float)                            # coefficient of the lr of other modules of the model
 parser.add_argument('--lr_backbone', default=5.0, type=float)                           # coefficient of the lr of the backbone of the model
 parser.add_argument('--mul_scheduler', default=0.9, type=float)                         # coefficient of the exp scheduler
+# run settings (OEM / Kaggle reproduction)
+parser.add_argument('--eval_every', default=1, type=int)                          # upstream: every epoch
+parser.add_argument('--trial_iters', default=0, type=int)                         # >0: short trial run + trial_report.json
+parser.add_argument('--max_session_hours', default=0.0, type=float)               # >0: stop after the epoch running past it
+parser.add_argument('--session_start', default=0.0, type=float)                   # unix time the Kaggle session started
+parser.add_argument('--log_every', default=50, type=int)                          # train_log.csv period (iterations)
+parser.add_argument('--vis_num', default=4, type=int)                             # fixed val images in the example panels
+parser.add_argument('--vis_seed', default=0, type=int)
+parser.add_argument('--run_meta', default='', type=str)                           # json written by tools/run_baseline.sh
 
 args = parser.parse_args()
 
@@ -110,8 +121,7 @@ def main(gpu, ngpus_per_node, cfg, args):
     if args.local_rank <= 0:
         os.makedirs(args.save_path, exist_ok=True)
         
-    logger = init_log_save(args.save_path, 'global', logging.INFO)
-    logger.propagate = 0
+    logger = get_logger(args)                    # rank 0: stdout + <save_path>/log.txt; other ranks: silent
 
     if args.local_rank <= 0:
         tb_dir = args.save_path
@@ -200,15 +210,20 @@ def main(gpu, ngpus_per_node, cfg, args):
     
     # valloader = DataLoader(valset, batch_size=1, pin_memory=True, num_workers=args.num_workers, drop_last=False, sampler=valsampler)
 
-    total_iters = len(trainloader_u) * args.epochs
-    previous_best = 0.0
-    previous_best1 = 0.0
-    previous_best2 = 0.0
+    iters_per_epoch = len(trainloader_u)
+    total_iters = iters_per_epoch * args.epochs
+
+    # config.json, resume from last.pth (model / optimizer / GradScaler / epoch / RNG), run summary
+    ctx = RunContext(args, cfg, logger, os.path.basename(__file__))
+    start_epoch, (previous_best, previous_best1, previous_best2) = ctx.start(
+        model, optimizer, scaler, count_lines(args.labeled_id_path), count_lines(args.unlabeled_id_path),
+        valset, iters_per_epoch)
 
     # can change with epochs, add SPL here
     conf_threshold = args.conf_threshold
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
+        epoch_t0 = time.time()
         if args.local_rank <= 0:
             logger.info('===========> Epoch: {:}, backbone1 LR: {:.4f}, backbone2 LR: {:.4f}, segmentation LR: {:.4f}'.format(
                 epoch, optimizer.param_groups[0]['lr'], optimizer.param_groups[1]['lr'], optimizer.param_groups[-1]['lr']))
@@ -435,6 +450,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                 loss_raw_con2 = torch.sum(loss_raw_con2) / torch.sum(ignore_img_mask != 255).item()
 
             loss_con = (loss_con1 + loss_con2 + loss_raw_con1 + loss_raw_con2) / 4
+            loss_con_raw = loss_con
             loss_con = loss_con * args.w_con
 
             # -------------
@@ -466,6 +482,7 @@ def main(gpu, ngpus_per_node, cfg, args):
             loss_dis_unlabeled = (loss_dis_cutmixed_aug_unlabeled + loss_dis_raw_unlabeled) / 2
 
             loss_dis = (loss_dis_labeled + loss_dis_unlabeled) / 2
+            loss_dis_raw = loss_dis
             loss_dis = loss_dis * args.w_dis
 
             # -------------
@@ -487,7 +504,7 @@ def main(gpu, ngpus_per_node, cfg, args):
             total_confident = (((unlabeled_pred_confidence1 >= 0.95) & (ignore_img_mask != 255)).sum().item() + ((unlabeled_pred_confidence2 >= 0.95) & (ignore_img_mask != 255)).sum().item()) / 2
             total_mask_ratio += total_confident / (ignore_img_mask != 255).sum().item()
 
-            iters = epoch * len(trainloader_u) + i
+            iters = epoch * iters_per_epoch + i
 
             # update lr
 
@@ -502,17 +519,24 @@ def main(gpu, ngpus_per_node, cfg, args):
             for ii in range(2, len(optimizer.param_groups)):
                 optimizer.param_groups[ii]['lr'] = seg_lr
 
-            if (i % (len(trainloader_u) // 8) == 0) and (args.local_rank <= 0):
+            if (i % max(iters_per_epoch // 8, 1) == 0) and (args.local_rank <= 0):
                 tb.add_scalar('train_loss_total', total_loss / (i+1), iters)
                 tb.add_scalar('train_loss_CE', total_loss_CE / (i+1), iters)
                 tb.add_scalar('train_loss_con', total_loss_con / (i+1), iters)
                 tb.add_scalar('train_loss_dis', total_loss_dis / (i+1), iters)
 
-            if (i % (len(trainloader_u) // 8) == 0) and (args.local_rank <= 0):
+            if (i % max(iters_per_epoch // 8, 1) == 0) and (args.local_rank <= 0):
                 logger.info('Iters: {:}, Total loss: {:.3f}, Loss CE: {:.3f}, '
                             'Loss consistency: {:.3f}, Loss discrepancy: {:.3f}, Mask: {:.3f}'.format(
                     i, total_loss / (i+1), total_loss_CE / (i+1), total_loss_con / (i+1), total_loss_dis / (i+1), 
                     total_mask_ratio / (i+1)))
+
+            if ctx.after_iter(epoch, i, iters, optimizer, loss, loss_CE, loss_con, loss_dis, loss_con_raw, loss_dis_raw,
+                              (True, True, True), unlabeled_pred1, unlabeled_pred2, ignore_img_mask != 255):
+                break
+
+        if ctx.trial_done:
+            break
 
         if args.use_SPL:
             conf_threshold += 0.01
@@ -526,51 +550,40 @@ def main(gpu, ngpus_per_node, cfg, args):
         
         barrier(args)
 
-        # test with different branches  
-        if args.local_rank <= 0:
-            if epoch == 4:
-                evaluate_result = evaluate_save(cfg['dataset'], args.save_path, args.local_rank, model, valloader, eval_mode, args, cfg, idx_epoch=5)
-            elif epoch == 9:
-                evaluate_result = evaluate_save(cfg['dataset'], args.save_path, args.local_rank, model, valloader, eval_mode, args, cfg, idx_epoch=10)
-            elif epoch == 19:
-                evaluate_result = evaluate_save(cfg['dataset'], args.save_path, args.local_rank, model, valloader, eval_mode, args, cfg, idx_epoch=20)
-            elif epoch == 39:
-                evaluate_result = evaluate_save(cfg['dataset'], args.save_path, args.local_rank, model, valloader, eval_mode, args, cfg, idx_epoch=40)
-            else:
-                evaluate_result = evaluate(args.local_rank, model, valloader, eval_mode, args, cfg)
+        # test with different branches: every --eval_every epochs and at the last epoch (rank 0 only)
+        evaluate_result, eval_time = None, None
+        if ctx.should_eval(epoch):
+            if args.local_rank <= 0:
+                evaluate_result = ctx.run_eval(model, valloader, eval_mode, epoch, iters + 1)
+                eval_time = evaluate_result['eval_time_s']
 
-            mIOU1 = evaluate_result['IOU1']
-            mIOU2 = evaluate_result['IOU2']
-            mIOU_ave = evaluate_result['IOU_ave']
+                mIOU1 = evaluate_result['IOU1']
+                mIOU2 = evaluate_result['IOU2']
+                mIOU_ave = evaluate_result['IOU_ave']
 
-            tb.add_scalar('meanIOU_branch1', mIOU1, epoch)
-            tb.add_scalar('meanIOU_branch2', mIOU2, epoch)
-            tb.add_scalar('meanIOU_ave', mIOU_ave, epoch)
+                tb.add_scalar('meanIOU_branch1', mIOU1, epoch)
+                tb.add_scalar('meanIOU_branch2', mIOU2, epoch)
+                tb.add_scalar('meanIOU_ave', mIOU_ave, epoch)
 
-            logger.info('***** Evaluation with branch 1 {} ***** >>>> meanIOU: {:.2f}\n'.format(eval_mode, mIOU1))
-            logger.info('***** Evaluation with branch 2 {} ***** >>>> meanIOU: {:.2f}\n'.format(eval_mode, mIOU2))
-            logger.info('***** Evaluation with two branches {} ***** >>>> meanIOU: {:.2f}\n'.format(eval_mode, mIOU_ave))
+                logger.info('***** Evaluation with branch 1 {} ***** >>>> meanIOU: {:.2f}'.format(evaluate_result['mode'], mIOU1))
+                logger.info('***** Evaluation with branch 2 {} ***** >>>> meanIOU: {:.2f}'.format(evaluate_result['mode'], mIOU2))
+                logger.info('***** Evaluation with two branches {} ***** >>>> meanIOU: {:.2f}'.format(evaluate_result['mode'], mIOU_ave))
 
-            if mIOU1 > previous_best1:
-                if previous_best1 != 0:
-                    os.remove(os.path.join(args.save_path, 'branch1_%s_%.2f.pth' % (args.backbone, previous_best1)))
-                previous_best1 = mIOU1
-                torch.save(unwrap(model).state_dict(),
-                        os.path.join(args.save_path, 'branch1_%s_%.2f.pth' % (args.backbone, mIOU1)))
-            
-            if mIOU2 > previous_best2:
-                if previous_best2 != 0:
-                    os.remove(os.path.join(args.save_path, 'branch2_%s_%.2f.pth' % (args.backbone, previous_best2)))
-                previous_best2 = mIOU2
-                torch.save(unwrap(model).state_dict(),
-                        os.path.join(args.save_path, 'branch2_%s_%.2f.pth' % (args.backbone, mIOU2)))
+                # best-on-val is kept for reference only: no 'best' checkpoints (only last.pth / final.pth)
+                previous_best1 = max(previous_best1, mIOU1)
+                previous_best2 = max(previous_best2, mIOU2)
+                previous_best = max(previous_best, mIOU_ave)
+            barrier(args)
 
-            if mIOU_ave > previous_best:
-                if previous_best != 0:
-                    os.remove(os.path.join(args.save_path, 'ave_%s_%.2f.pth' % (args.backbone, previous_best)))
-                previous_best = mIOU_ave
-                torch.save(unwrap(model).state_dict(),
-                        os.path.join(args.save_path, 'ave_%s_%.2f.pth' % (args.backbone, mIOU_ave)))
+        # last.pth every epoch (final.pth at the end); stop cleanly past --max_session_hours
+        if ctx.end_epoch(epoch, iters, model, optimizer, scaler, (previous_best, previous_best1, previous_best2),
+                         last_eval=evaluate_result, epoch_time=time.time() - epoch_t0 - (eval_time or 0.0),
+                         eval_time=eval_time):
+            return
+
+    if ctx.trial_done:
+        ctx.finish_trial(model, valloader, 'sliding_window' if cfg['dataset'] == 'cityscapes' else 'original',
+                         epoch, iters + 1)
 
 
 if __name__ == '__main__':
@@ -589,3 +602,6 @@ if __name__ == '__main__':
         mp.spawn(main, nprocs=cfg['n_gpu'], args=(cfg['n_gpu'], cfg, args))
     else:
         main(0, 1, cfg, args)
+
+    # 0 = finished (or trial done), 3 = stopped by --max_session_hours (resume next session), 1 = failure
+    sys.exit(exit_code(args.save_path, args.trial_iters > 0))
