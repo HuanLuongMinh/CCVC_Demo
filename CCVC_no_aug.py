@@ -69,6 +69,7 @@ parser.add_argument('--use_norm', default=False, type=str2bool)
 parser.add_argument('--use_dropout', default=False, type=str2bool)
 parser.add_argument('--dropout', default=0.5, type=float)
 parser.add_argument('--conf_threshold', default=0.5, type=float)
+parser.add_argument('--conf_prob', default=True, type=str2bool)                 # True: gamma vs softmax prob (paper); False: vs raw logit (upstream)
 parser.add_argument('--mode_confident', default='no', type=str, choices=['normal', 'soft', 'vote', 'vote_threshold', 'vote_soft', 'no']) 
 parser.add_argument('--use_SPL', default=False, type=str2bool)
 # weight settings
@@ -291,7 +292,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                 loss_con2 = (torch.sum(loss_con2_same) + torch.sum(loss_con2_different)) / torch.sum(ignore_img_mask != 255).item()
 
             elif args.mode_confident == 'vote_threshold':
-                different1_confident, different1_else, different2_confident, different2_else = vote_threshold_label_selection(unlabeled_pred1, unlabeled_pred2, conf_threshold)
+                different1_confident, different1_else, different2_confident, different2_else = vote_threshold_label_selection(unlabeled_pred1, unlabeled_pred2, conf_threshold, use_prob=args.conf_prob)
 
                 loss_con1_else = criterion_u(unlabeled_pred2, unlabeled_logits['pred1'].softmax(dim=1).max(dim=1)[1].detach().long()) * (different1_else & (ignore_img_mask != 255))
                 loss_con2_else = criterion_u(unlabeled_pred1, unlabeled_logits['pred2'].softmax(dim=1).max(dim=1)[1].detach().long()) * (different2_else & (ignore_img_mask != 255))

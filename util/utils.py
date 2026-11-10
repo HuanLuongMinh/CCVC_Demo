@@ -366,7 +366,12 @@ def vote_label_selection(pred1, pred2):
     # only vote
     # same prediction: weight = 1.0
     # different prediction: weight = 0.5
-    
+
+    # use_prob: compare the threshold with the softmax probability (paper Sec. 3.3)
+    # instead of the raw logit (upstream behaviour)
+    if use_prob:
+        pred1, pred2 = pred1.softmax(dim=1), pred2.softmax(dim=1)
+
     pred1_confidence, pred1_label = pred1.max(dim=1)
     pred2_confidence, pred2_label = pred2.max(dim=1)
 
@@ -376,7 +381,7 @@ def vote_label_selection(pred1, pred2):
     return same_pred, different_pred
 
 
-def vote_threshold_label_selection(pred1, pred2, threshold):
+def vote_threshold_label_selection(pred1, pred2, threshold, use_prob=False):
     """ 
         input:
             pred1 & pred2: logits with per-class prediction probability: B, C, H, W

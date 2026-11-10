@@ -68,6 +68,7 @@ parser.add_argument('--use_norm', default=False, type=str2bool)
 parser.add_argument('--use_dropout', default=False, type=str2bool)
 parser.add_argument('--dropout', default=0.5, type=float)
 parser.add_argument('--conf_threshold', default=0.5, type=float)
+parser.add_argument('--conf_prob', default=True, type=str2bool)                 # True: gamma vs softmax prob (paper); False: vs raw logit (upstream)
 parser.add_argument('--mode_confident', default='no', type=str, choices=['normal', 'soft', 'vote', 'vote_threshold', 'vote_soft', 'no']) 
 parser.add_argument('--use_SPL', default=False, type=str2bool)
 parser.add_argument('--use_aug', default=True, type=str2bool)
@@ -355,7 +356,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                 loss_raw_con2 = (torch.sum(loss_raw_con2_same) + torch.sum(loss_raw_con2_different)) / torch.sum(ignore_img_mask != 255).item()
 
             elif args.mode_confident == 'vote_threshold':
-                different1_confident, different1_else, different2_confident, different2_else = vote_threshold_label_selection(unlabeled_pred1, unlabeled_pred2, conf_threshold)
+                different1_confident, different1_else, different2_confident, different2_else = vote_threshold_label_selection(unlabeled_pred1, unlabeled_pred2, conf_threshold, use_prob=args.conf_prob)
 
                 loss_con1_else = criterion_u(cutmixed_aug_unlabeled_pred2, aug_unlabeled_pseudo_label1_for_mix) * (different1_else & (aug_unlabeled_ignore_img_mask_for_mix != 255))
                 loss_con2_else = criterion_u(cutmixed_aug_unlabeled_pred1, aug_unlabeled_pseudo_label2_for_mix) * (different2_else & (aug_unlabeled_ignore_img_mask_for_mix != 255))
@@ -366,7 +367,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                 loss_con1 = (torch.sum(loss_con1_else) + torch.sum(loss_con1_cc)) / torch.sum(aug_unlabeled_ignore_img_mask_for_mix != 255).item()
                 loss_con2 = (torch.sum(loss_con2_else) + torch.sum(loss_con2_cc)) / torch.sum(aug_unlabeled_ignore_img_mask_for_mix != 255).item()
 
-                raw_different1_confident, raw_different1_else, raw_different2_confident, raw_different2_else = vote_threshold_label_selection(raw_unlabeled_pred1, raw_unlabeled_pred2, conf_threshold)
+                raw_different1_confident, raw_different1_else, raw_different2_confident, raw_different2_else = vote_threshold_label_selection(raw_unlabeled_pred1, raw_unlabeled_pred2, conf_threshold, use_prob=args.conf_prob)
 
                 loss_raw_con1_else = criterion_u(raw_unlabeled_pred2, raw_unlabeled_logits['pred1'].softmax(dim=1).max(dim=1)[1].detach().long()) * (raw_different1_else & (ignore_img_mask != 255))
                 loss_raw_con2_else = criterion_u(raw_unlabeled_pred1, raw_unlabeled_logits['pred2'].softmax(dim=1).max(dim=1)[1].detach().long()) * (raw_different2_else & (ignore_img_mask != 255))
