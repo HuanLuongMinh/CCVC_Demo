@@ -57,6 +57,8 @@ parser.add_argument('--backbone', default='resnet101', type=str)
 parser.add_argument('--labeled_id_path', default='partitions/pascal/366/labeled.txt', type=str)
 parser.add_argument('--unlabeled_id_path', default='partitions/pascal/366/unlabeled.txt', type=str)
 parser.add_argument('--save_path', default='test', type=str)
+parser.add_argument('--data_root', default=None, type=str)                    # overrides cfg['data_root']
+parser.add_argument('--val_id_path', default=None, type=str)                  # default: partitions/<dataset>/val.txt
 parser.add_argument('--load_path', default='test', type=str) 
 parser.add_argument('--port', default=0, type=int)                              # 0: pick a free port
 parser.add_argument('--epochs', default=80, type=int)
@@ -171,7 +173,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                              args.crop_size, args.unlabeled_id_path)
     trainset_l = SemiDataset(cfg['dataset'], cfg['data_root'], 'train_l',
                              args.crop_size, args.labeled_id_path, nsample=len(trainset_u.ids))
-    valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'val')
+    valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'val', val_id_path=args.val_id_path)
 
     trainsampler_l = torch.utils.data.distributed.DistributedSampler(trainset_l, num_replicas=args.world_size,
                                                                      rank=max(args.local_rank, 0), seed=args.seed)
@@ -473,6 +475,8 @@ def main(gpu, ngpus_per_node, cfg, args):
 if __name__ == '__main__':
 
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
+    if args.data_root:
+        cfg['data_root'] = args.data_root
 
     cfg['n_gpu'] = args.world_size
 

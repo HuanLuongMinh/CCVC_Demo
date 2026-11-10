@@ -1,4 +1,5 @@
 from dataset.transform import *
+from dataset.tif_io import read_rgb, read_label, oem_label_to_train
 
 from copy import deepcopy
 import math
@@ -13,7 +14,7 @@ from torchvision import transforms
 
 
 class SemiDataset(Dataset):
-    def __init__(self, name, root, mode, size=None, id_path=None, nsample=None):
+    def __init__(self, name, root, mode, size=None, id_path=None, nsample=None, val_id_path=None):
         self.name = name
         self.root = root
         self.mode = mode
@@ -27,13 +28,22 @@ class SemiDataset(Dataset):
                 random.shuffle(self.ids)
                 self.ids = self.ids[:nsample]
         else:
-            with open('partitions/%s/val.txt' % name, 'r') as f:
+            with open(val_id_path or 'partitions/%s/val.txt' % name, 'r') as f:
                 self.ids = f.read().splitlines()
 
     def __getitem__(self, item):
         id = self.ids[item]
-        img = Image.open(os.path.join(self.root, id.split(' ')[0])).convert('RGB')
-        mask = Image.fromarray(np.array(Image.open(os.path.join(self.root, id.split(' ')[1]))))
+        if self.name == 'oem':
+            img = read_rgb(os.path.join(self.root, id.split(' ')[0]))
+            if self.mode == 'train_u':
+                # unlabeled: the ground truth is never read; this all-zero mask only marks
+                # the crop padding (254 -> ignore_mask 255) below
+                mask = Image.fromarray(np.zeros((img.size[1], img.size[0]), dtype=np.uint8))
+            else:
+                mask = Image.fromarray(oem_label_to_train(read_label(os.path.join(self.root, id.split(' ')[1]))))
+        else:
+            img = Image.open(os.path.join(self.root, id.split(' ')[0])).convert('RGB')
+            mask = Image.fromarray(np.array(Image.open(os.path.join(self.root, id.split(' ')[1]))))
 
         if self.mode == 'val':
             img, mask = normalize(img, mask)

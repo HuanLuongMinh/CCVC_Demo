@@ -1,0 +1,16 @@
+# arguments for dataset
+# OpenEarthMap (Kaggle mirror aletbm/global-land-cover-mapping-openearthmap):
+# images/{train,val}/*.tif, label/{train,val}/*.tif, labels 0..8 with 0 = 'unknown'.
+# The loader maps 0 -> 255 (ignored) and 1..8 -> 0..7.
+dataset: oem
+nclass: 8
+data_root: ''               # set by tools/run_baseline.sh (--data_root)
+class_names: ['Bareland', 'Rangeland', 'Developed space', 'Road', 'Tree', 'Water', 'Agriculture land', 'Building']
+# official OEM colours (open-earth-map.org), same order as class_names
+palette: [[128, 0, 0], [0, 255, 36], [148, 148, 148], [255, 255, 255],
+          [34, 97, 38], [0, 69, 255], [75, 181, 73], [222, 31, 7]]
+
+# arguments for model: as configs/pascal.yaml (DeepLabV3+ ResNet-101, output stride 16)
+multi_grid: False
+replace_stride_with_dilation: [False, False, True]
+dilations: [6, 12, 18]
