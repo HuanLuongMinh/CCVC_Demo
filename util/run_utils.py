@@ -649,11 +649,13 @@ class RunContext(object):
             times = self.iter_times
             skip = 20 if len(times) > 20 else 0
             used = times[skip:] or times
-            s_mean, s_med = float(np.mean(used)), float(np.median(used))
+            # s/iter needs at least 2 iterations (the time between consecutive steps)
+            s_mean = float(np.mean(used)) if used else None
+            s_med = float(np.median(used)) if used else None
             ipe = self.iters_per_epoch
             total = ipe * a.epochs
             n_evals = math.ceil(a.epochs / a.eval_every)
-            hours = (total * s_med + n_evals * res['eval_time_s']) / 3600.0
+            hours = (total * s_med + n_evals * res['eval_time_s']) / 3600.0 if used else None
             limit = a.max_session_hours if a.max_session_hours > 0 else KAGGLE_SESSION_HOURS
             for k, m in enumerate(mems):
                 if k == 0 and 'eval_peak_allocated_gb' in res:
@@ -676,7 +678,7 @@ class RunContext(object):
                     'n_evals': n_evals, 'eval_every': a.eval_every,
                     'formula': 'hours = total_iters * s_per_iter_median + n_evals * eval_time_s',
                     'total_hours': hours, 'session_hours': limit,
-                    'kaggle_sessions': max(1, math.ceil(hours / limit)),
+                    'kaggle_sessions': max(1, math.ceil(hours / limit)) if used else None,
                 },
             }
             write_json(os.path.join(self.save, 'trial_report.json'), rep)
@@ -688,7 +690,10 @@ class RunContext(object):
             L('  GPUs    %s x %d (%s) | batch/GPU %d | effective %d+%d | AMP %s | eval %s' % (
                 ', '.join(rep['gpus']), a.world_size, a.dist_backend, a.batch_size,
                 rep['effective_batch_labeled'], rep['effective_batch_unlabeled'], a.amp, rep['eval_mode']))
-            L('  speed   %.3f s/iter mean, %.3f median (%d iters, first %d excluded)' % (s_mean, s_med, len(used), skip))
+            if used:
+                L('  speed   %.3f s/iter mean, %.3f median (%d iters, first %d excluded)' % (s_mean, s_med, len(used), skip))
+            else:
+                L('  speed   not measured: TRIAL_ITERS must be >= 2 (s/iter = time between consecutive iterations)')
             for k, m in enumerate(mems):
                 if m:
                     L('  GPU%d    train peak %.2f GB alloc / %.2f GB reserved%s' % (
@@ -697,8 +702,12 @@ class RunContext(object):
                         if 'eval_peak_allocated_gb' in m else ''))
             L('  eval    %.0f s | mIoU b1 %.2f b2 %.2f ave %.2f (sanity check only)' % (
                 res['eval_time_s'], res['IOU1'], res['IOU2'], res['IOU_ave']))
-            L('  full    %d iter/epoch x %d epochs = %d iters + %d evals -> %.1f h -> %d session(s) of %.2f h' % (
-                ipe, a.epochs, total, n_evals, hours, rep['projection']['kaggle_sessions'], limit))
+            if used:
+                L('  full    %d iter/epoch x %d epochs = %d iters + %d evals -> %.1f h -> %d session(s) of %.2f h' % (
+                    ipe, a.epochs, total, n_evals, hours, rep['projection']['kaggle_sessions'], limit))
+            else:
+                L('  full    %d iter/epoch x %d epochs = %d iters + %d evals (hours: needs s/iter)' % (
+                    ipe, a.epochs, total, n_evals))
             L('-' * 78)
         barrier(a)
 

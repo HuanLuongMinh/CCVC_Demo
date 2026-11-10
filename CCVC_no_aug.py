@@ -502,7 +502,7 @@ def main(gpu, ngpus_per_node, cfg, args):
                          eval_time=eval_time):
             return
 
-    if ctx.trial_done:
+    if ctx.trial:          # trial ends with one evaluation + report, also when it ran out of epochs first
         ctx.finish_trial(model, valloader, 'sliding_window' if cfg['dataset'] == 'cityscapes' else 'original',
                          epoch, iters + 1)
 
