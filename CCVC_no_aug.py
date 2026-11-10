@@ -105,7 +105,7 @@ parser.add_argument('--session_start', default=0.0, type=float)                 
 parser.add_argument('--log_every', default=50, type=int)                          # train_log.csv period (iterations)
 parser.add_argument('--vis_num', default=4, type=int)                             # fixed val images in the example panels
 parser.add_argument('--vis_seed', default=0, type=int)
-parser.add_argument('--run_meta', default='', type=str)                           # json written by tools/run_baseline.sh
+parser.add_argument('--run_meta', default='', type=str)                           # json written by run_baseline.sh
 parser.add_argument('--sup_pure', default=False, type=str2bool)                  # labeled images only (no unlabeled forward)
 
 args = parser.parse_args()

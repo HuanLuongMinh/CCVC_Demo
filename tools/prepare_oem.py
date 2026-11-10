@@ -1,4 +1,4 @@
-"""Data check + nested labeled/unlabeled split for ONE run (spec section 2). Called by tools/run_baseline.sh.
+"""Data check + nested labeled/unlabeled split for ONE run (spec section 2). Called by run_baseline.sh.
 
     python tools/prepare_oem.py --split 1_4 [--split_seed 0] [--full_unlabeled same|none]
                                 [--import_labeled FILE] [--data_root DIR] [--part_root DIR]

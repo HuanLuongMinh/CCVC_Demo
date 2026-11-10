@@ -1,4 +1,4 @@
-"""Check a ResNet checkpoint before training (called by tools/run_baseline.sh).
+"""Check a ResNet checkpoint before training (called by run_baseline.sh).
 
     python -m model.backbone.check_pretrained --path pretrained/resnet101.pth --arch resnet101
 Exit code 0 = accepted, 1 = rejected (the offending keys are listed).

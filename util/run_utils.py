@@ -396,7 +396,7 @@ class RunContext(object):
             t_eval = trial.get('eval_time_s')
         if s_iter is None:
             self.logger.info('Kaggle sessions: no estimate yet (no s/iter measured) - printed after %d iterations '
-                             '(or run TRIAL=1 first)' % a.log_every)
+                             '(or do a --dryrun first)' % a.log_every)
             return
         rem_iters = self.total_iters - self.global_iter
         rem_evals = len([e for e in self.eval_epochs() if e >= self.start_epoch])
