@@ -2,7 +2,7 @@
 
 Fork của code chính thức [xiaoyao3302/CCVC](https://github.com/xiaoyao3302/CCVC) @ `274672cca69e9aec809b3f0ecd86ed9885d2a0a5` (xem `UPSTREAM_COMMIT`), chạy trên Kaggle 2×T4. Mỗi lần gọi chạy **đúng một split**; chạy split khác thì đổi biến `SPLIT` và gọi lại cùng script, kết quả không ghi đè lên nhau.
 
-Hướng dẫn từng cell trên Kaggle: [KAGGLE_NOTEBOOK.md](KAGGLE_NOTEBOOK.md).
+Hướng dẫn chạy từng bước (kèm xử lý lỗi): [HUONG_DAN_CHAY.md](HUONG_DAN_CHAY.md). Các cell Kaggle chi tiết: [KAGGLE_NOTEBOOK.md](KAGGLE_NOTEBOOK.md).
 
 ---
 
