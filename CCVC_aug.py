@@ -23,7 +23,7 @@ from valid import evaluate
 from valid_save import evaluate_save
 from util.ohem import ProbOhemCrossEntropy2d
 from util.utils import count_params, init_log_save, vote_label_selection, soft_label_selection, vote_soft_label_selection, vote_threshold_label_selection
-from util.dist_helper import setup_distributed
+from util.dist_helper import setup_distributed, find_free_port, init_ddp, barrier, unwrap
 
 
 def str2bool(v):
@@ -50,14 +50,15 @@ parser.add_argument('--labeled_id_path', default='partitions/pascal/366/labeled.
 parser.add_argument('--unlabeled_id_path', default='partitions/pascal/366/unlabeled.txt', type=str)
 parser.add_argument('--save_path', default='test', type=str)
 parser.add_argument('--load_path', default='test', type=str) 
-parser.add_argument('--port', default=2020, type=int)
+parser.add_argument('--port', default=0, type=int)                              # 0: pick a free port
 parser.add_argument('--epochs', default=80, type=int)
 parser.add_argument('--batch_size', default=6, type=int)                        # batch size per GPU
 parser.add_argument('--crop_size', default=321, type=int)                       # 512 or 321
 parser.add_argument('--seed', default=22, type=int)                             # 512 or 321   
 parser.add_argument('--num_workers', default=2, type=int)                             # 512 or 321   
 # ddp settings
-parser.add_argument('--gpus', default=4, type=int, help='number of gpus per node')
+parser.add_argument('--gpus', default=torch.cuda.device_count(), type=int, help='number of gpus per node')
+parser.add_argument('--device', default='cuda', type=str, choices=['cuda', 'cpu'])  # cpu: tests only
 parser.add_argument('--nodes', default=1, type=int, help='number of nodes')
 parser.add_argument("--ddp", default=True, type=str2bool, help='distributed data parallel training or not')
 # network settings
@@ -87,11 +88,13 @@ parser.add_argument('--mul_scheduler', default=0.9, type=float)                 
 args = parser.parse_args()
 
 args.world_size = args.gpus * args.nodes
-args.ddp = True if args.gpus > 1 else False
+args.ddp = True if (args.gpus > 1 and args.device == 'cuda') else False
+args.world_size = args.world_size if args.ddp else 1
 
 def main(gpu, ngpus_per_node, cfg, args):
 
     args.local_rank = gpu
+    args.device = torch.device('cuda', max(gpu, 0)) if args.device == 'cuda' else torch.device('cpu')
 
     if args.local_rank <= 0:
         os.makedirs(args.save_path, exist_ok=True)
@@ -103,9 +106,11 @@ def main(gpu, ngpus_per_node, cfg, args):
         tb_dir = args.save_path
         tb = SummaryWriter(log_dir=tb_dir)
 
+    args.dist_backend = 'none'
     if args.ddp:
-        dist.init_process_group(backend='nccl', rank=args.local_rank, world_size=args.world_size)
-        # dist.init_process_group(backend='nccl', init_method='env://', rank=args.local_rank, world_size=args.world_size)
+        args.dist_backend = init_ddp(args.local_rank, args.world_size, args.ports)
+    elif args.device.type == 'cuda':
+        torch.cuda.set_device(args.device)
 
     if args.local_rank <= 0:
         logger.info('{}\n'.format(pprint.pformat(cfg)))
@@ -127,9 +132,11 @@ def main(gpu, ngpus_per_node, cfg, args):
                      {'params': [param for name, param in model.named_parameters() if 'backbone' not in name],
                       'lr': args.base_lr * args.lr_network}], lr=args.base_lr, momentum=0.9, weight_decay=1e-4)
 
-    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model.cuda(args.local_rank)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, broadcast_buffers=False, find_unused_parameters=False)
+    if args.ddp:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    model.to(args.device)
+    if args.ddp:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, broadcast_buffers=False, find_unused_parameters=False)
 
     # # try to load saved model
     # try:   
@@ -145,12 +152,12 @@ def main(gpu, ngpus_per_node, cfg, args):
     # ---- #
     # CE loss for labeled data
     if args.mode_criterion == 'CE':
-        criterion_l = nn.CrossEntropyLoss(reduction='mean', ignore_index=255).cuda(args.local_rank)
+        criterion_l = nn.CrossEntropyLoss(reduction='mean', ignore_index=255).to(args.device)
     else:
-        criterion_l = ProbOhemCrossEntropy2d(**cfg['criterion']['kwargs']).cuda(args.local_rank)
+        criterion_l = ProbOhemCrossEntropy2d(**cfg['criterion']['kwargs']).to(args.device)
     
     # consistency loss for unlabeled data
-    criterion_u = nn.CrossEntropyLoss(reduction='none').cuda(args.local_rank)
+    criterion_u = nn.CrossEntropyLoss(reduction='none').to(args.device)
 
     # ------- #
     # dataset #
@@ -161,17 +168,13 @@ def main(gpu, ngpus_per_node, cfg, args):
                              args.crop_size, args.labeled_id_path, nsample=len(trainset_u.ids))
     valset = SemiDataset(cfg['dataset'], cfg['data_root'], 'val')
 
-    if args.ddp:
-        trainsampler_l = torch.utils.data.distributed.DistributedSampler(trainset_l)
-    else:
-        trainsampler_l = None
+    trainsampler_l = torch.utils.data.distributed.DistributedSampler(trainset_l, num_replicas=args.world_size,
+                                                                     rank=max(args.local_rank, 0), seed=args.seed)
     trainloader_l = DataLoader(trainset_l, batch_size=args.batch_size,
                                pin_memory=True, num_workers=args.num_workers, drop_last=True, sampler=trainsampler_l)
 
-    if args.ddp:
-        trainsampler_u = torch.utils.data.distributed.DistributedSampler(trainset_u)
-    else:
-        trainsampler_u = None
+    trainsampler_u = torch.utils.data.distributed.DistributedSampler(trainset_u, num_replicas=args.world_size,
+                                                                     rank=max(args.local_rank, 0), seed=args.seed)
     
     trainloader_u = DataLoader(trainset_u, batch_size=args.batch_size,
                                pin_memory=True, num_workers=args.num_workers, drop_last=True, sampler=trainsampler_u)
@@ -212,12 +215,12 @@ def main(gpu, ngpus_per_node, cfg, args):
 
         for i, ((labeled_img, labeled_img_mask), (unlabeled_img, aug_unlabeled_img, ignore_img_mask, unlabeled_cutmix_box)) in enumerate(loader):
 
-            labeled_img, labeled_img_mask = labeled_img.cuda(args.local_rank), labeled_img_mask.cuda(args.local_rank)
-            unlabeled_img, aug_unlabeled_img, ignore_img_mask, unlabeled_cutmix_box = unlabeled_img.cuda(args.local_rank), aug_unlabeled_img.cuda(args.local_rank), ignore_img_mask.cuda(args.local_rank), unlabeled_cutmix_box.cuda(args.local_rank)
+            labeled_img, labeled_img_mask = labeled_img.to(args.device), labeled_img_mask.to(args.device)
+            unlabeled_img, aug_unlabeled_img, ignore_img_mask, unlabeled_cutmix_box = unlabeled_img.to(args.device), aug_unlabeled_img.to(args.device), ignore_img_mask.to(args.device), unlabeled_cutmix_box.to(args.device)
 
             optimizer.zero_grad()
 
-            dist.barrier()
+            barrier(args)
 
             num_lb, num_ulb = labeled_img.shape[0], unlabeled_img.shape[0]
 
@@ -457,7 +460,7 @@ def main(gpu, ngpus_per_node, cfg, args):
             # -------------
             loss = loss_CE + loss_con + loss_dis
 
-            dist.barrier()
+            barrier(args)
 
             loss.backward()
             optimizer.step()
@@ -507,7 +510,7 @@ def main(gpu, ngpus_per_node, cfg, args):
         else:
             eval_mode = 'original'
         
-        dist.barrier()
+        barrier(args)
 
         # test with different branches  
         if args.local_rank <= 0:
@@ -538,21 +541,21 @@ def main(gpu, ngpus_per_node, cfg, args):
                 if previous_best1 != 0:
                     os.remove(os.path.join(args.save_path, 'branch1_%s_%.2f.pth' % (args.backbone, previous_best1)))
                 previous_best1 = mIOU1
-                torch.save(model.module.state_dict(),
+                torch.save(unwrap(model).state_dict(),
                         os.path.join(args.save_path, 'branch1_%s_%.2f.pth' % (args.backbone, mIOU1)))
             
             if mIOU2 > previous_best2:
                 if previous_best2 != 0:
                     os.remove(os.path.join(args.save_path, 'branch2_%s_%.2f.pth' % (args.backbone, previous_best2)))
                 previous_best2 = mIOU2
-                torch.save(model.module.state_dict(),
+                torch.save(unwrap(model).state_dict(),
                         os.path.join(args.save_path, 'branch2_%s_%.2f.pth' % (args.backbone, mIOU2)))
 
             if mIOU_ave > previous_best:
                 if previous_best != 0:
                     os.remove(os.path.join(args.save_path, 'ave_%s_%.2f.pth' % (args.backbone, previous_best)))
                 previous_best = mIOU_ave
-                torch.save(model.module.state_dict(),
+                torch.save(unwrap(model).state_dict(),
                         os.path.join(args.save_path, 'ave_%s_%.2f.pth' % (args.backbone, mIOU_ave)))
 
 
@@ -560,14 +563,13 @@ if __name__ == '__main__':
 
     cfg = yaml.load(open(args.config, "r"), Loader=yaml.Loader)
 
-    cfg['n_gpu'] = args.gpus
+    cfg['n_gpu'] = args.world_size
 
-    if args.ddp:
-        os.environ['MASTER_ADDR'] = '127.0.0.1'
-        os.environ['MASTER_PORT'] = str(args.port)
-        # args.base_lr = args.base_lr * args.world_size
+    # two ports chosen once here so that every rank agrees: NCCL, then gloo fallback
+    args.ports = (args.port or find_free_port(), find_free_port())
+    # args.base_lr = args.base_lr * args.world_size
 
     if args.ddp:
         mp.spawn(main, nprocs=cfg['n_gpu'], args=(cfg['n_gpu'], cfg, args))
     else:
-        main(-1, 1, cfg, args)
+        main(0, 1, cfg, args)
