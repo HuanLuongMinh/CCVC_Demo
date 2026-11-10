@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+pretrained/
+*.pth
+*.pth.tmp
+/exp/*
+!/exp/cityscapes/
+/tests_out/
+.ipynb_checkpoints/

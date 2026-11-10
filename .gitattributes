@@ -1,0 +1,6 @@
+# Code is edited on Windows but runs on Linux (Kaggle): keep LF everywhere.
+* text=auto eol=lf
+*.pth binary
+*.png binary
+*.tif binary
+*.pdf binary
