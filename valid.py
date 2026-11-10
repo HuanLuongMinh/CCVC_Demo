@@ -52,9 +52,9 @@ def evaluate(local_rank, model, loader, mode, args, cfg):
             if mode == 'sliding_window':
                 grid = args.crop_size
                 b, _, h, w = img.shape
-                final_1 = torch.zeros(b, 19, h, w).cuda(local_rank)
-                final_2 = torch.zeros(b, 19, h, w).cuda(local_rank)
-                final_ave = torch.zeros(b, 19, h, w).cuda(local_rank)
+                final_1 = torch.zeros(b, cfg['nclass'], h, w).cuda(local_rank)
+                final_2 = torch.zeros(b, cfg['nclass'], h, w).cuda(local_rank)
+                final_ave = torch.zeros(b, cfg['nclass'], h, w).cuda(local_rank)
                 row = 0
                 while row < h:
                     col = 0
