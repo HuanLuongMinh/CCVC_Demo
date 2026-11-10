@@ -150,11 +150,82 @@ class ResNet(nn.Module):
         return c1, c2, c3, c4
 
 
+# deep-stem ResNet of UniMatch/CCVC (NOT torchvision): the stem must be present with these shapes
+DEEP_STEM_SHAPES = {
+    'conv1.0.weight': (64, 3, 3, 3),
+    'conv1.3.weight': (64, 64, 3, 3),
+    'conv1.6.weight': (128, 64, 3, 3),
+    'bn1.weight': (128,), 'bn1.bias': (128,), 'bn1.running_mean': (128,), 'bn1.running_var': (128,),
+}
+ALLOWED_UNEXPECTED = {'fc.weight', 'fc.bias'}
+
+
+def load_pretrained_file(path):
+    try:
+        state_dict = torch.load(path, map_location='cpu', weights_only=True)
+    except Exception:  # noqa: BLE001 - older pickles that need full unpickling
+        state_dict = torch.load(path, map_location='cpu', weights_only=False)
+    for key in ('state_dict', 'model'):
+        if isinstance(state_dict, dict) and key in state_dict and isinstance(state_dict[key], dict):
+            state_dict = state_dict[key]
+    return {k[len('module.'):] if k.startswith('module.') else k: v for k, v in state_dict.items()}
+
+
+def check_pretrained(model, state_dict):
+    """Compare a backbone with a checkpoint. Returns (report, errors); errors name every offending key.
+
+    Blocks on: a backbone key missing from the file or with a different shape (num_batches_tracked
+    ignored), a missing/wrong deep-stem key, or a key in the file that is neither in the backbone nor
+    fc.weight / fc.bias.
+    """
+    def skip(k):
+        return k.endswith('num_batches_tracked')
+
+    expected = {k: tuple(v.shape) for k, v in model.state_dict().items() if not skip(k)}
+    given = {k: tuple(v.shape) for k, v in state_dict.items() if not skip(k)}
+    missing = sorted(k for k in expected if k not in given)
+    wrong_shape = sorted((k, expected[k], given[k]) for k in expected if k in given and given[k] != expected[k])
+    stem = sorted((k, shape, given.get(k)) for k, shape in DEEP_STEM_SHAPES.items() if given.get(k) != shape)
+    unexpected = sorted(k for k in given if k not in expected and k not in ALLOWED_UNEXPECTED)
+    matched = len(expected) - len(missing) - len(wrong_shape)
+    report = {'n_backbone_keys': len(expected), 'n_matched': matched,
+              'match_ratio': matched / max(len(expected), 1),
+              'ignored_extra': sorted(k for k in given if k in ALLOWED_UNEXPECTED)}
+    sep = '\n    '
+    errors = []
+    if missing:
+        errors.append('missing backbone keys (%d):' % len(missing) + sep + sep.join(missing))
+    if wrong_shape:
+        errors.append('wrong shape (%d):' % len(wrong_shape) + sep +
+                      sep.join('%s: expected %s, file has %s' % t for t in wrong_shape))
+    if stem:
+        errors.append('deep-stem keys missing or wrong (%d) - is this a torchvision ResNet?' % len(stem) + sep +
+                      sep.join('%s: expected %s, file has %s' % t for t in stem))
+    if unexpected:
+        errors.append('unexpected keys (%d):' % len(unexpected) + sep + sep.join(unexpected))
+    return report, errors
+
+
+def _main_process():
+    return not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+
+
+_reported = set()
+
+
 def _resnet(arch, block, layers, pretrained, **kwargs):
     model = ResNet(block, layers, **kwargs)
     if pretrained:
         pretrained_path = "pretrained/%s.pth" % arch
-        state_dict = torch.load(pretrained_path)
+        state_dict = load_pretrained_file(pretrained_path)
+        report, errors = check_pretrained(model, state_dict)
+        if errors:
+            raise RuntimeError('pretrained weights %s rejected:\n  ' % pretrained_path + '\n  '.join(errors))
+        if _main_process() and pretrained_path not in _reported:
+            _reported.add(pretrained_path)
+            print('[pretrained] %s: matched %d/%d backbone keys (%.1f%%), ignored %s' % (
+                pretrained_path, report['n_matched'], report['n_backbone_keys'], 100 * report['match_ratio'],
+                report['ignored_extra'] or 'nothing'), flush=True)
         model.load_state_dict(state_dict, strict=False)
     return model
 
