@@ -15,7 +15,15 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 from torch.optim import SGD
 from torch.utils.data import DataLoader
-from tensorboardX import SummaryWriter
+try:
+    from tensorboardX import SummaryWriter
+except ImportError:  # PyTorch 2.x images (Kaggle) may lack tensorboardX; CSV logs are the primary record
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+    except ImportError:
+        class SummaryWriter(object):
+            def __init__(self, *a, **k): pass
+            def add_scalar(self, *a, **k): pass
 import yaml
 from dataset.semi import SemiDataset
 from model.semseg.deeplabv3plus import Discrepancy_DeepLabV3Plus
