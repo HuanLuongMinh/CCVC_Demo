@@ -23,7 +23,7 @@ EVAL_EVERY=${EVAL_EVERY:-5}                 # đánh giá mỗi N epoch (+ epoch
 BATCH_SIZE=${BATCH_SIZE:-2}                 # mỗi GPU, mỗi loader
 LAMBDA_PRESET=${LAMBDA_PRESET:-blended}     # blended = 2/2/1 | original = 5/1/2 | readme_original = 5/2/1 (w_CE/w_con/w_dis)
 DATA_ROOT=${DATA_ROOT:-}                    # trống: tự tìm dưới /kaggle/input
-PRETRAINED_DIR=${PRETRAINED_DIR:-}          # trống: tự tìm dưới /kaggle/input/model_lab*
+PRETRAINED_DIR=${PRETRAINED_DIR:-}          # trống: tự tìm resnet101.pth dưới /kaggle/input (ưu tiên model_lab / model-lab)
 OUT_ROOT=${OUT_ROOT:-/kaggle/working/exp/oem}
 PART_ROOT=${PART_ROOT:-/kaggle/working/partitions/oem}
 RESTORE_DIR=${RESTORE_DIR:-auto}            # auto: tự chép exp/ + partitions/ từ output phiên trước | <thư mục> | none
@@ -61,7 +61,7 @@ Usage: bash run_baseline.sh split <1/16|1/8|1/4|1/2|full|n<k>> [options]
   --force                   run a finished split again (old directory renamed, not deleted)
   --import-labeled <file>   use this list of labeled images
   --data-root <dir>         OEM root (default: found under /kaggle/input)
-  --pretrained-dir <dir>    folder with resnet101.pth (default: /kaggle/input/model_lab*)
+  --pretrained-dir <dir>    folder with resnet101.pth (default: found under /kaggle/input, model_lab/model-lab first)
   --restore-dir <d>         auto (default) | none | <dir> : previous session's output to restore
   --out-root <dir>          results (default /kaggle/working/exp/oem)
   --part-root <dir>         splits (default /kaggle/working/partitions/oem)
@@ -154,9 +154,12 @@ $PY tools/restore_output.py --restore_dir "$RESTORE_DIR" --search_root "$SEARCH_
 if [[ -n "$PRETRAINED_DIR" ]]; then
     PTH=$(find "$PRETRAINED_DIR" -name resnet101.pth 2>/dev/null | sort | head -n 1)
 else
-    PTH=$(find "$SEARCH_ROOT" -maxdepth 1 -name 'model_lab*' -print0 2>/dev/null | xargs -0 -r -I{} find {} -name resnet101.pth 2>/dev/null | sort | head -n 1)
+    # Kaggle mounts /kaggle/input/<slug>/ (old) or /kaggle/input/datasets/<user>/<slug>/ (new); slug model_lab or model-lab
+    ALL_PTH=$(find "$SEARCH_ROOT" -maxdepth 6 -name resnet101.pth 2>/dev/null | sort)
+    PTH=$(grep -E 'model[-_]lab' <<< "$ALL_PTH" | head -n 1)
+    [[ -n "$PTH" ]] || PTH=$(head -n 1 <<< "$ALL_PTH")
 fi
-[[ -n "$PTH" && -f "$PTH" ]] || die "resnet101.pth not found (${PRETRAINED_DIR:-$SEARCH_ROOT/model_lab*}); add the Kaggle dataset model_lab or use --pretrained-dir"
+[[ -n "$PTH" && -f "$PTH" ]] || die "resnet101.pth not found (${PRETRAINED_DIR:-under $SEARCH_ROOT, e.g. $SEARCH_ROOT/datasets/<user>/model-lab}); add the Kaggle dataset model-lab or use --pretrained-dir"
 mkdir -p pretrained
 ln -sf "$(cd "$(dirname "$PTH")" && pwd)/$(basename "$PTH")" pretrained/resnet101.pth || cp "$PTH" pretrained/resnet101.pth
 log "pretrained: $PTH"
