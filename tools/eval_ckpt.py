@@ -9,7 +9,8 @@
   final_eval.json ('original' by default).
 - Origin checkpoints (no da* keys) and DAPN checkpoints load alike: only keys da1.* / da2.* may be unused
   (the DA modules play no role at evaluation); any other missing / unexpected key is an error.
-- Writes eval_ckpt.json (three mIoU, agree_wrong_ratio, agree_right_ratio, conflict_ratio, err_b1, per class)
+- Writes eval_ckpt.json next to the checkpoint, or under <repo>/../exp/oem_dapn/eval_ckpt/ when that directory
+  is read-only (Kaggle: a previous output under /kaggle/input) (three mIoU, agree_wrong_ratio, agree_right_ratio, conflict_ratio, err_b1, per class)
   and eval_ckpt_confusion_{b1,agree_wrong}.csv. The three mIoU must match final_eval.json within --tol
   (default 0.01), otherwise exit code 1.
 - No pretrained weights are needed (the backbone is built without loading resnet101.pth).
@@ -117,7 +118,15 @@ def main():
         out['check_vs_final_eval'] = {'final_eval': fe_path, 'tol': a.tol, 'abs_diff': diffs, 'ok': ok}
     else:
         out['check_vs_final_eval'] = None
-    out_path = a.out or os.path.join(run_dir, 'eval_ckpt.json')
+    out_path = a.out
+    if not out_path:
+        if os.access(run_dir, os.W_OK):
+            out_path = os.path.join(run_dir, 'eval_ckpt.json')
+        else:                                   # e.g. a previous output mounted read-only under /kaggle/input
+            tag = '_'.join(str(conf.get(k)) for k in ('split', 'method')) + '_seed%s' % conf.get('seed')
+            d = os.path.join(os.path.dirname(ROOT), 'exp', 'oem_dapn', 'eval_ckpt')   # /kaggle/working/exp/oem_dapn
+            os.makedirs(d, exist_ok=True)
+            out_path = os.path.join(d, 'eval_ckpt_%s.json' % tag)
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(out, f, indent=2)
     base = os.path.splitext(out_path)[0]
