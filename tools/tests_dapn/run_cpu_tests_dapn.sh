@@ -250,7 +250,7 @@ check "1/4 dry run exit 0" test $? -eq 0
 check "1/4: compared with the origin dry run of run_baseline.sh (exp/oem/.../ccvc_aug/.../trial)" $PY - "$D_OUT/1_4_s0/ccvc_dapn/seed0/trial/trial_report.json" <<'EOF'
 import json, sys
 c = json.load(open(sys.argv[1]))['dapn_vs_baseline']
-assert c['baseline_method'] == 'ccvc_aug' and '/oem/1_4_s0/ccvc_aug/' in c['baseline_report'].replace('\', '/')
+assert c['baseline_method'] == 'ccvc_aug' and '/oem/1_4_s0/ccvc_aug/' in c['baseline_report'].replace(chr(92), '/')
 assert c['s_per_iter_median']['dapn'] and c['s_per_iter_median']['baseline'] and c['s_per_iter_median']['increase_pct'] is not None
 assert c['projected_hours_full_run']['increase_pct'] is not None and c['comparable']
 EOF
