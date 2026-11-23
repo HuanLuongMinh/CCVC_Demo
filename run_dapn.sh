@@ -18,6 +18,8 @@ METHOD=${METHOD:-ccvc_dapn}                 # ccvc_dapn | ccvc_dapn_l | ccvc_dap
 W_DAPG=${W_DAPG:-0.2}                       # trọng số L_DAPG (giữ tỉ lệ CE : DAPG = 1 : 0,1 của DAPN vì w_CE = 2)
 DAPG_POS=${DAPG_POS:-feat}                  # feat (304 kênh, mặc định) | c4 (layer4, ablation)
 BASELINE_PART_ROOT=${BASELINE_PART_ROOT:-}  # partitions/oem của lần chạy baseline: đối chiếu sha256, khác -> dừng
+BASELINE_TRIAL=${BASELINE_TRIAL:-}          # --dryrun: trial_report.json của baseline để so (trống: tự tìm)
+NO_BASELINE_TRIAL=${NO_BASELINE_TRIAL:-0}   # 1: không chạy thêm lượt thử ccvc_dapn_off khi không có baseline
 SEED=${SEED:-0}
 SPLIT_SEED=${SPLIT_SEED:-0}
 FULL_UNLABELED=${FULL_UNLABELED:-same}
@@ -41,6 +43,7 @@ DEVICE=${DEVICE:-cuda}
 SESSION_START=${SESSION_START:-$(date +%s)}
 
 set -uo pipefail
+ORIG_ARGS=("$@")
 cd "$(dirname "$0")" || exit 2
 PY=${PYTHON:-python}
 die() { echo "[run_dapn] ERROR: $*" >&2; exit 2; }
@@ -61,6 +64,8 @@ Usage: bash run_dapn.sh split <1/16|1/8|1/4|1/2|full|n<k>> [options]
   --w-dapg <x>                weight of L_DAPG (default 0.2)
   --dapg-pos <p>              feat (default) | c4
   --baseline-part-root <dir>  partitions/oem of the baseline run: labeled/unlabeled/val must be identical
+  --baseline-trial <file>     --dryrun: baseline trial_report.json to compare with (default: searched)
+  --no-baseline-trial         --dryrun: no extra ccvc_dapn_off dry run when no baseline report is found
   --lambda <p>                blended (2/2/1, default) | original (5/1/2) | readme_original (5/2/1)
   --seed <n> / --split-seed <n> / --epochs <n> / --eval-every <n> / --batch-size <n>
   --full-unlabeled <m>        split full only: same (default) | none
@@ -89,6 +94,8 @@ while [[ $# -gt 0 ]]; do
         --w-dapg)           need "$@"; W_DAPG=$2; shift 2 ;;
         --dapg-pos)         need "$@"; DAPG_POS=$2; shift 2 ;;
         --baseline-part-root) need "$@"; BASELINE_PART_ROOT=$2; shift 2 ;;
+        --baseline-trial)   need "$@"; BASELINE_TRIAL=$2; shift 2 ;;
+        --no-baseline-trial) NO_BASELINE_TRIAL=1; shift ;;
         --full-unlabeled)   need "$@"; FULL_UNLABELED=$2; shift 2 ;;
         --lambda)           need "$@"; LAMBDA_PRESET=$2; shift 2 ;;
         --seed)             need "$@"; SEED=$2; shift 2 ;;
@@ -262,6 +269,24 @@ RC=${PIPESTATUS[0]}
 
 # ---------- 9. results ----------
 [[ $RC -eq 0 || $RC -eq 3 ]] && $PY tools/show_results.py --run_dir "$SAVE_DIR" --out_root "$OUT_ROOT"
+# dry run of a DAPN preset: compare speed / memory / hours with the baseline (spec 7)
+if [[ $RC -eq 0 && "$TRIAL" == 1 && "$CODE_VERSION" == dapn && "$METHOD" != ccvc_dapn_off && -f "$SAVE_DIR/trial_report.json" ]]; then
+    FIND=(tools/trial_compare_dapn.py find --split_dir "$(basename "$PART_DIR")" --seed "$SEED" --out_root "$OUT_ROOT"
+          --search_root "$SEARCH_ROOT" --baseline_trial "$BASELINE_TRIAL")
+    BASE_REPORT=$($PY "${FIND[@]}")
+    if [[ -z "$BASE_REPORT" && -z "$BASELINE_TRIAL" && "$NO_BASELINE_TRIAL" == 0 ]]; then
+        log "no baseline dry run found: running the same dry run with --method ccvc_dapn_off (DAPG off) for the comparison"
+        RESTORE_DIR=none bash "$(pwd)/$(basename "$0")" "${ORIG_ARGS[@]}" --method ccvc_dapn_off --no-baseline-trial \
+            --restore-dir none || log "WARNING: ccvc_dapn_off dry run failed; no comparison"
+        BASE_REPORT=$($PY "${FIND[@]}")
+    fi
+    if [[ -n "$BASE_REPORT" ]]; then
+        $PY tools/trial_compare_dapn.py compare --report "$SAVE_DIR/trial_report.json" --baseline "$BASE_REPORT" \
+            || log "WARNING: comparison with $BASE_REPORT failed"
+    else
+        log "no baseline dry run to compare with (--baseline-trial <trial_report.json> to give one)"
+    fi
+fi
 case $RC in
     0) log "finished: $SAVE_DIR" ;;
     3) log "stopped by MAX_SESSION_HOURS=$MAX_SESSION_HOURS: save /kaggle/working (Save Version), add it as input next session and run the SAME command" ;;
