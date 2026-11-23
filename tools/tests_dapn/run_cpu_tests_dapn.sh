@@ -77,21 +77,22 @@ _p = os.environ.get('MODLOG')
 if _p:
     def _dump():
         with open(_p, 'a') as f:
-            f.write(' '.join(sys.argv[:1]) + ': ' + ' '.join(sorted(sys.modules)) + '\n')
+            f.write(os.path.basename(sys.argv[0]) + ' :: ' + ' '.join(sorted(sys.modules)) + '\n')
     atexit.register(_dump)
 EOF
-dapn_mods() { grep -oiE "[a-z0-9_.]*dapn[a-z0-9_.]*" "$1" | sort -u | tr '\n' ' '; }
+# module names only (the repository folder CCVC-DAPN may appear in paths, not in module names)
+dapn_mods() { sed 's/^.* :: //' "$1" | tr ' ' '\n' | grep -iE "dapn" | sort -u | tr '\n' ' '; }
 PYTHONPATH="$W/hook" MODLOG="$W/mods_baseline.txt" base split 1/4 --dryrun --trial-iters 2
 check "run_baseline.sh --dryrun exit 0" test $? -eq 0
-check "run_baseline.sh: training process ran (module log written)" grep -q "CCVC_aug.py" "$W/mods_baseline.txt"
+check "run_baseline.sh: training process ran (module log written)" grep -q "^CCVC_aug.py :: " "$W/mods_baseline.txt"
 check "run_baseline.sh: no *dapn* module imported [$(dapn_mods "$W/mods_baseline.txt")]" test -z "$(dapn_mods "$W/mods_baseline.txt")"
 PYTHONPATH="$W/hook" MODLOG="$W/mods_origin.txt" dapn split 1/4 --method ccvc_origin --dryrun --trial-iters 2
 check "run_dapn.sh --method ccvc_origin --dryrun exit 0" test $? -eq 0
-check "ccvc_origin: training script is CCVC_aug.py" bash -c "grep -q '^CCVC_aug.py:' '$W/mods_origin.txt'"
-check "ccvc_origin: CCVC_aug.py process imports no *dapn* module" bash -c "! grep '^CCVC_aug.py:' '$W/mods_origin.txt' | grep -qi dapn"
+check "ccvc_origin: training script is CCVC_aug.py" bash -c "grep -q '^CCVC_aug.py :: ' '$W/mods_origin.txt'"
+check "ccvc_origin: CCVC_aug.py process imports no *dapn* module" bash -c "! grep '^CCVC_aug.py :: ' '$W/mods_origin.txt' | sed 's/^.* :: //' | grep -qi dapn"
 PYTHONPATH="$W/hook" MODLOG="$W/mods_dapn.txt" dapn split 1/4 --dryrun --trial-iters 2
 check "control: ccvc_dapn process does import model.dapn / valid_dapn / run_utils_dapn" bash -c \
-    "grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'model.dapn ' && grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'valid_dapn' && grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'util.run_utils_dapn'"
+    "grep '^CCVC_aug_dapn.py :: ' '$W/mods_dapn.txt' | grep -q 'model.dapn ' && grep '^CCVC_aug_dapn.py :: ' '$W/mods_dapn.txt' | grep -q 'valid_dapn' && grep '^CCVC_aug_dapn.py :: ' '$W/mods_dapn.txt' | grep -q 'util.run_utils_dapn'"
 
 section "full runs (1 epoch): run_baseline.sh ccvc_aug and run_dapn.sh ccvc_dapn, split 1/4"
 base split 1/4; check "run_baseline.sh split 1/4 exit 0" test $? -eq 0
