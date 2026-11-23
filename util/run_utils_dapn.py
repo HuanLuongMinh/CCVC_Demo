@@ -68,7 +68,13 @@ class _MergeCsv(CsvLog):
 
 
 def _repo_commit():
-    return git_commit(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    """(commit, dirty) of this repository; from PACKAGE_COMMIT when running from the Kaggle zip (no .git)."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    commit, dirty = git_commit(root)
+    pkg = os.path.join(root, 'PACKAGE_COMMIT')
+    if not commit and os.path.exists(pkg):
+        commit, dirty = open(pkg).read().strip() + ' (zip)', False
+    return commit, dirty
 
 
 class RunContextDAPN(RunContext):

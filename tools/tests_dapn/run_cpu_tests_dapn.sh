@@ -1,0 +1,200 @@
+#!/bin/bash
+# CPU test suite of CCVC-DAPN (spec 9.1, stage 1: tests 1-12, 14, 15, 16, 18 + DAPN on both sub-networks).
+#   bash tools/tests_dapn/run_cpu_tests_dapn.sh <work_dir>        (work_dir is wiped first; outside the repo)
+# Env: DAPN_ORIG_DIR=<dir with the original dynamic_anchor.py / dapg_loss.py> (default: downloaded, pinned commit)
+# Prints PASS/FAIL per check and a summary; exit code = number of failed checks. Commit before running
+# (test 18 packages HEAD).
+set -u
+W=${1:?usage: run_cpu_tests_dapn.sh <work_dir>}
+cd "$(dirname "$0")/../.." || exit 1
+REPO=$(pwd)
+PY=${PYTHON:-python}
+export PYTHONIOENCODING=utf-8
+rm -rf "$W"; mkdir -p "$W/input" "$W/hook"
+W=$(cd "$W" && pwd)
+FAILS=0; PASSES=0
+pass() { echo "PASS  $*"; PASSES=$((PASSES+1)); }
+fail() { echo "FAIL  $*"; FAILS=$((FAILS+1)); }
+check() { local name=$1; shift; if "$@"; then pass "$name"; else fail "$name"; fi; }
+section() { echo; echo "=== $* ==="; }
+filt() { grep -v "Warning\|warn(\|super().__init__\|oneDNN\|Consider using tensor.detach" ; }
+
+export SEARCH_ROOT="$W/input" DEVICE=cpu NUM_WORKERS=0 RESTORE_DIR=none EVAL_EVERY=1 EPOCHS=1 \
+       EXTRA="--crop_size 64 --log_every 2"
+O_OUT="$W/work/exp/oem"; O_PART="$W/work/partitions/oem"
+D_OUT="$W/work/exp/oem_dapn"; D_PART="$W/work/partitions/oem_dapn"
+base() { OUT_ROOT=$O_OUT PART_ROOT=$O_PART bash run_baseline.sh "$@" > "$W/last.log" 2>&1; local rc=$?; filt < "$W/last.log" >> "$W/all_runs.log"; return $rc; }
+dapn() { OUT_ROOT=$D_OUT PART_ROOT=$D_PART bash run_dapn.sh "$@" > "$W/last.log" 2>&1; local rc=$?; filt < "$W/last.log" >> "$W/all_runs.log"; return $rc; }
+
+section "0. synthetic data"
+$PY tools/tests/make_fake_oem.py --out "$W/input" --n_train 16 --n_val 4 --size 96 2>&1 | filt
+check "fake data: 16 train / 4 val" test "$(ls "$W/input/oem/images/train" | wc -l)" -eq 16
+
+section "1. verify_origin step 1 (integrity); one byte changed in a copy -> FAIL"
+$PY tools/verify_origin.py --steps 1 > "$W/v1.log" 2>&1; check "integrity PASS on this repository" test $? -eq 0
+mkdir -p "$W/tamper" && git archive HEAD | tar -x -C "$W/tamper"
+printf ' ' >> "$W/tamper/util/utils.py"
+$PY "$W/tamper/tools/verify_origin.py" --steps 1 > "$W/v1t.log" 2>&1; rc=$?
+check "modified origin file -> FAIL (exit 1)" test $rc -eq 1
+check "the modified file is named" grep -q "modified util/utils.py" "$W/v1t.log"
+rm "$W/tamper/CCVC_aug.py"
+$PY "$W/tamper/tools/verify_origin.py" --steps 1 > "$W/v1m.log" 2>&1
+check "missing origin file -> FAIL and named" grep -q "missing  CCVC_aug.py" "$W/v1m.log"
+
+section "2/4. golden (from tag ccvc-origin): CCVC_aug.py and CCVC_aug_dapn.py --use_dapg False"
+$PY tools/verify_origin.py --steps 2,3 --work "$W/verify" > "$W/v23.log" 2>&1
+cat "$W/v23.log" | grep -E "^\s+[23] "
+check "step 2: CCVC_aug.py == golden (losses of 5 iterations + weights)" grep -qE "^\s+2 behaviour\s+PASS" "$W/v23.log"
+check "step 3: CCVC_aug_dapn.py --use_dapg False == golden" grep -qE "^\s+3 superset\s+PASS" "$W/v23.log"
+
+section "5. initialisation: ccvc_dapn and CCVC_aug.py, same seed -> origin part bit-identical"
+$PY tools/golden_capture.py --script CCVC_aug.py --work "$W/verify" --at init --out "$W/init_o.json" > /dev/null 2>&1
+$PY tools/golden_capture.py --script CCVC_aug_dapn.py --work "$W/verify" --at init --out "$W/init_d.json" > /dev/null 2>&1
+check "origin-part checksum identical; DAPN model holds da1 + da2" $PY - "$W/init_o.json" "$W/init_d.json" <<'EOF'
+import json, sys
+o, d = (json.load(open(p)) for p in sys.argv[1:])
+assert o['init_sha256'] == d['init_sha256'] and o['init_keys'] == d['init_keys'], (o['init_sha256'], d['init_sha256'])
+assert o['da_keys'] == [] and d['da_keys'] == ['da1', 'da2'], d['da_keys']
+EOF
+
+section "6. check_dapn_diff"
+$PY tools/check_dapn_diff.py > /dev/null; check "CCVC_aug_dapn.py: every difference marked [DAPN]" test $? -eq 0
+sed 's/^            loss_con = loss_con \* args.w_con$/            loss_con = loss_con * args.w_con  # changed/' CCVC_aug_dapn.py > "$W/bad_dapn.py"
+$PY tools/check_dapn_diff.py --dapn "$W/bad_dapn.py" > /dev/null; check "one unmarked line -> FAIL" test $? -eq 1
+
+section "7. DAPN copy == original DAPN files (main_final 33ad638)"
+$PY tools/tests_dapn/test_dapn_equivalence.py ${DAPN_ORIG_DIR:+--orig_dir "$DAPN_ORIG_DIR"} > "$W/eq.log" 2>&1
+cat "$W/eq.log" | tail -1; check "assign / proto / quality / loss / gradients within 1e-6" test $? -eq 0 -a -n "$(grep '^PASS' "$W/eq.log")"
+
+section "8-12. unit tests (presets, both sub-networks, gradients, optimizer, masks, fp32, evaluation)"
+$PY tools/tests_dapn/test_dapn_unit.py 2>&1 | filt | tee "$W/unit.log" | grep -E "^(PASS|FAIL)"
+check "test_dapn_unit.py: 0 failed" grep -q "test_dapn_unit: 0 failed" "$W/unit.log"
+
+section "3. origin path imports no DAPN file (sys.modules at exit of every python process)"
+cat > "$W/hook/sitecustomize.py" <<'EOF'
+import atexit, os, sys
+_p = os.environ.get('MODLOG')
+if _p:
+    def _dump():
+        with open(_p, 'a') as f:
+            f.write(' '.join(sys.argv[:1]) + ': ' + ' '.join(sorted(sys.modules)) + '\n')
+    atexit.register(_dump)
+EOF
+dapn_mods() { grep -oiE "[a-z0-9_.]*dapn[a-z0-9_.]*" "$1" | sort -u | tr '\n' ' '; }
+PYTHONPATH="$W/hook" MODLOG="$W/mods_baseline.txt" base split 1/4 --dryrun --trial-iters 2
+check "run_baseline.sh --dryrun exit 0" test $? -eq 0
+check "run_baseline.sh: training process ran (module log written)" grep -q "CCVC_aug.py" "$W/mods_baseline.txt"
+check "run_baseline.sh: no *dapn* module imported [$(dapn_mods "$W/mods_baseline.txt")]" test -z "$(dapn_mods "$W/mods_baseline.txt")"
+PYTHONPATH="$W/hook" MODLOG="$W/mods_origin.txt" dapn split 1/4 --method ccvc_origin --dryrun --trial-iters 2
+check "run_dapn.sh --method ccvc_origin --dryrun exit 0" test $? -eq 0
+check "ccvc_origin: training script is CCVC_aug.py" bash -c "grep -q '^CCVC_aug.py:' '$W/mods_origin.txt'"
+check "ccvc_origin: CCVC_aug.py process imports no *dapn* module" bash -c "! grep '^CCVC_aug.py:' '$W/mods_origin.txt' | grep -qi dapn"
+PYTHONPATH="$W/hook" MODLOG="$W/mods_dapn.txt" dapn split 1/4 --dryrun --trial-iters 2
+check "control: ccvc_dapn process does import model.dapn / valid_dapn / run_utils_dapn" bash -c \
+    "grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'model.dapn ' && grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'valid_dapn' && grep '^CCVC_aug_dapn.py:' '$W/mods_dapn.txt' | grep -q 'util.run_utils_dapn'"
+
+section "full runs (1 epoch): run_baseline.sh ccvc_aug and run_dapn.sh ccvc_dapn, split 1/4"
+base split 1/4; check "run_baseline.sh split 1/4 exit 0" test $? -eq 0
+dapn split 1/4; check "run_dapn.sh split 1/4 (ccvc_dapn) exit 0" test $? -eq 0
+RO="$O_OUT/1_4_s0/ccvc_aug/seed0"; RD="$D_OUT/1_4_s0/ccvc_dapn/seed0"
+check "DAPN on both sub-networks end to end: final.pth has da1.* and da2.*; train_log has b1 and b2 columns filled" \
+    $PY - "$RD" <<'EOF'
+import csv, sys, torch
+d = sys.argv[1]
+sd = torch.load(d + '/final.pth', map_location='cpu')
+assert any(k.startswith('da1.') for k in sd) and any(k.startswith('da2.') for k in sd)
+rows = list(csv.DictReader(open(d + '/train_log.csv')))
+for r in rows:
+    for k in ('intra_b1', 'intra_b2', 'n_valid_proto_b1', 'n_valid_proto_b2', 'L_dapg_b1', 'L_dapg_b2', 'L_dapg_l', 'L_dapg_u', 'cc_ratio_loss'):
+        assert r[k] != '' and float(r[k]) >= 0, (k, r[k])
+    assert float(r['L_dapg_u']) > 0 and float(r['L_dapg_b2']) > 0
+EOF
+check "DAPN outputs: eval_log agreement columns, final_eval agreement metrics, confusion CSVs, config keys" \
+    $PY - "$RD" <<'EOF'
+import csv, json, os, sys
+d = sys.argv[1]
+r = list(csv.DictReader(open(d + '/eval_log.csv')))[-1]
+s = float(r['agree_wrong_ratio']) + float(r['agree_right_ratio']) + float(r['conflict_ratio'])
+assert abs(s - 1) < 1e-4, s
+assert 'agree_wrong_Building' in r
+f = json.load(open(d + '/final_eval.json'))
+assert f['code_version'] == 'dapn' and 'agree_wrong_ratio' in f and len(f['agree_wrong_class']) == 8
+assert os.path.exists(d + '/confusion_b1.csv') and os.path.exists(d + '/confusion_agree_wrong.csv')
+c = json.load(open(d + '/config.json'))
+for k, v in {'code_version': 'dapn', 'use_dapg': True, 'dapg_on': 'lu', 'dapg_branches': 'both', 'w_dapg': 0.2,
+             'dapg_pos': 'feat', 'origin_commit': 'b44dc5707d98e12d8b015697c4f2dd66019c5ebb',
+             'dapn_commit': '33ad6387068f78240e8b04f1dbddbc8dd6dc5d6c', 'dapn_branch': 'main_final',
+             'verify_origin': 'PASS', 'da_max_groups': 64, 'da_temperature': 0.1}.items():
+    assert c.get(k) == v, (k, c.get(k))
+assert c['deviations_from_dapn'] and c['ccvc_dapn_commit']
+EOF
+
+section "12. eval_ckpt.py: origin and DAPN checkpoints reproduce final_eval.json"
+$PY tools/eval_ckpt.py --ckpt "$RO/final.pth" --device cpu --num-workers 0 --out "$W/eval_origin.json" > "$W/ec_o.log" 2>&1
+check "origin checkpoint: three mIoU = final_eval.json (+-0.01)" test $? -eq 0
+check "origin checkpoint recognised as origin" grep -q "origin checkpoint" "$W/ec_o.log"
+$PY tools/eval_ckpt.py --ckpt "$RD/final.pth" --device cpu --num-workers 0 --out "$W/eval_dapn.json" > "$W/ec_d.log" 2>&1
+check "DAPN checkpoint: three mIoU = final_eval.json (+-0.01)" test $? -eq 0
+check "DAPN checkpoint: da1, da2 ignored at evaluation" grep -q "dapn (da1, da2 ignored" "$W/ec_d.log"
+check "eval_ckpt agreement metrics = final_eval.json of the DAPN run" $PY - "$W/eval_dapn.json" "$RD/final_eval.json" <<'EOF'
+import json, sys
+e, f = (json.load(open(p)) for p in sys.argv[1:])
+for k in ('agree_wrong_ratio', 'agree_right_ratio', 'conflict_ratio', 'err_b1'):
+    assert abs(e[k] - f[k]) < 1e-6, (k, e[k], f[k])
+assert abs(e['agree_wrong_ratio'] + e['agree_right_ratio'] + e['conflict_ratio'] - 1) < 1e-9
+EOF
+
+section "14. output isolation and restore_output_dapn.py"
+check "origin results only under exp/oem, DAPN results only under exp/oem_dapn" bash -c \
+    "test -f '$RO/final_eval.json' -a -f '$RD/final_eval.json' -a ! -e '$O_OUT/1_4_s0/ccvc_dapn' -a ! -e '$D_OUT/1_4_s0/ccvc_aug'"
+mkdir -p "$W/prev/out" && cp -r "$W/work/exp" "$W/work/partitions" "$W/prev/out/"
+$PY tools/restore_output_dapn.py --restore_dir "$W/prev/out" --out_root "$W/restored/exp/oem_dapn" \
+    --part_root "$W/restored/partitions/oem_dapn" > "$W/restore.log" 2>&1
+check "restore: exit 0" test $? -eq 0
+check "restore: DAPN run restored" test -f "$W/restored/exp/oem_dapn/1_4_s0/ccvc_dapn/seed0/final_eval.json"
+check "restore: origin results NOT copied" test ! -e "$W/restored/exp/oem"
+check "restore: warning about the origin results" grep -q "holds origin results" "$W/restore.log"
+
+section "15. partitions vs the baseline run (--baseline-part-root)"
+dapn split 1/4 --baseline-part-root "$O_PART" --dryrun --trial-iters 2
+check "identical split -> run (exit 0)" test $? -eq 0
+check "logged: identical to baseline" grep -q "partition check vs baseline: identical_to_baseline" "$W/last.log"
+cp -r "$O_PART" "$W/base_bad"
+sed -i '1d' "$W/base_bad/1_4_s0/labeled.txt"
+dapn split 1/4 --baseline-part-root "$W/base_bad" --dryrun --trial-iters 2; rc=$?
+check "one line different -> stop (exit 2)" test $rc -eq 2
+check "message: split differs from the baseline run" grep -q "split differs from the baseline run" "$W/last.log"
+
+section "16. resume ccvc_dapn (2 epochs, session limit after epoch 1)"
+EPOCHS=2 MAX_SESSION_HOURS=0.000001 dapn split 1/8; rc=$?
+R8="$D_OUT/1_8_s0/ccvc_dapn/seed0"
+check "stopped for resume (exit 3), last.pth written" test $rc -eq 3 -a -f "$R8/last.pth"
+check "last.pth holds da1.* and da2.*" $PY -c "
+import torch; sd = torch.load(r'$R8/last.pth', map_location='cpu', weights_only=False)['model']
+assert any(k.startswith('da1.') for k in sd) and any(k.startswith('da2.') for k in sd)"
+EPOCHS=2 EXTRA="--crop_size 64 --log_every 2 --w_dapg 0.3" dapn split 1/8; rc=$?
+check "w_dapg changed -> resume blocked" bash -c "test $rc -ne 0 && grep -q 'resume blocked: DAPN configuration differs' '$W/last.log' && grep -q 'w_dapg' '$W/last.log'"
+EPOCHS=2 dapn split 1/8; rc=$?
+check "same command -> resumes and finishes (exit 0)" test $rc -eq 0 -a -f "$R8/final_eval.json"
+check "resumed at epoch 1 with da* restored from last.pth" grep -q "RESUME from epoch 1" "$R8/log.txt"
+check "train_log.csv continues to the last iteration, no duplicates" $PY - "$R8" <<'EOF'
+import csv, json, sys
+it = [int(r['iteration']) for r in csv.DictReader(open(sys.argv[1] + '/train_log.csv'))]
+total = json.load(open(sys.argv[1] + '/config.json'))['total_iters']
+assert it == sorted(set(it)) and it[-1] == total, (it, total)
+EOF
+
+section "18. Kaggle package: unzip into an empty directory -> verify_origin PASS, run_dapn.sh --dryrun runs"
+bash tools/make_kaggle_package_dapn.sh "$W/dist" > "$W/pkg.log" 2>&1; rc=$?
+check "package built" test $rc -eq 0 -a -f "$W/dist/ccvc_dapn_oem.zip"
+mkdir -p "$W/kaggle_working" && unzip -q "$W/dist/ccvc_dapn_oem.zip" -d "$W/kaggle_working"
+check "zip contains origin + DAPN files, no .git" bash -c "test -f '$W/kaggle_working/CCVC-DAPN/CCVC_aug.py' -a -f '$W/kaggle_working/CCVC-DAPN/run_baseline.sh' -a -f '$W/kaggle_working/CCVC-DAPN/run_dapn.sh' -a -f '$W/kaggle_working/CCVC-DAPN/PACKAGE_COMMIT' -a ! -e '$W/kaggle_working/CCVC-DAPN/.git'"
+(cd "$W/kaggle_working/CCVC-DAPN" && $PY tools/verify_origin.py --steps 1 > "$W/zip_v.log" 2>&1); check "unzipped: verify_origin step 1 PASS" test $? -eq 0
+OUT_ROOT="$W/kaggle_working/exp/oem_dapn" PART_ROOT="$W/kaggle_working/partitions/oem_dapn" \
+    bash "$W/kaggle_working/CCVC-DAPN/run_dapn.sh" split 1/4 --dryrun --trial-iters 2 > "$W/zip_run.log" 2>&1
+check "unzipped: run_dapn.sh --dryrun exit 0" test $? -eq 0
+check "unzipped run records the package commit" bash -c "grep -q '(zip)' '$W/kaggle_working/exp/oem_dapn/1_4_s0/ccvc_dapn/seed0/trial/config.json'"
+
+echo
+echo "==== run_cpu_tests_dapn: $PASSES passed, $FAILS failed ===="
+exit $FAILS
