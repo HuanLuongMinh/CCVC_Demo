@@ -94,6 +94,52 @@ Mã thoát: 0 xong; 3 hết giờ khi đang train (chạy lại lệnh cũ); **4
 ```
 `<ORIGIN>` = đường dẫn output của notebook origin dưới `/kaggle/input/...`. Đi tiếp khi nhóm đồng thuận–sai có độ thuần thấp hơn rõ nhóm đồng thuận–đúng.
 
+### Chạy chẩn đoán origin (0a/0b)
+
+Một notebook riêng, một lần Save Version, cho checkpoint **origin** split 1/4 và 1/8: `eval_ckpt.py` (0a: đồng thuận–sai chính xác, theo lớp, ma trận nhầm lẫn) rồi `diagnose_entanglement.py` nhánh 1 và 2 (0b). Hai script chạy nguyên bản, ngưỡng mặc định (`--tol 0.01`, `--mixed 0.6`, biên 3 px, K 64, τ 0.1). Đây là mốc so sánh cho `ccvc_dapn`.
+
+**Input cần gắn** (Add Data):
+- output version Kaggle của **hai lần chạy origin** (có `exp/oem/1_4_s0/ccvc_aug/seed0/final.pth` và `exp/oem/1_8_s0/ccvc_aug/seed0/final.pth`, cùng `config.json`, `final_eval.json`, `partitions/oem/val.txt`);
+- dataset OEM `aletbm/global-land-cover-mapping-openearthmap`;
+- gói `ccvc_dapn_oem.zip` mới (hoặc clone branch `DAPN_CCVC`, xem dưới).
+- Settings: **GPU T4**, Internet On nếu clone từ GitHub.
+
+Script tự tìm mọi đường dẫn dưới `/kaggle/input` và in bảng đường đã chọn. Tìm thấy 0 hoặc nhiều hơn 1 checkpoint khác nhau cho một split → dừng, in danh sách; khi đó truyền tường minh `--run-1-4 <thư mục run> --run-1-8 <thư mục run>` (tương tự `--part-root <thư mục có val.txt>`, `--data-root <OEM>`). Bản sao giống hệt của cùng một `final.pth` (ví dụ run 1/4 được khôi phục vào output 1/8) chỉ tính một lần.
+
+**Cell 1 — lấy code + kiểm đường (phiên interactive, 1–2 phút)**
+```python
+!rm -rf /kaggle/working/CCVC-DAPN
+!Z=$(find /kaggle/input -name ccvc_dapn_oem.zip | head -n 1); \
+ if [ -n "$Z" ]; then unzip -q -o "$Z" -d /kaggle/working; \
+ else cp -r "$(find /kaggle/input -maxdepth 5 -type d -name CCVC-DAPN | head -n 1)" /kaggle/working/; fi
+%cd /kaggle/working/CCVC-DAPN
+!bash tools/run_diag_origin.sh --quick
+```
+Hoặc lấy code từ GitHub (branch DAPN): `!git clone -q -b DAPN_CCVC --single-branch https://github.com/HuanLuongMinh/CCVC_Demo.git /kaggle/working/CCVC-DAPN`.
+`--quick` chạy preflight (torch/GPU, đủ `final.pth`/`config.json`/`final_eval.json`, `val.txt` 384 dòng và đủ ảnh/nhãn, `verify_origin` bước 1, đĩa trống > 1 GB) và một `diagnose` nhỏ (1/4, nhánh 1, 2 ảnh) vào `.../diag_origin/_quick/`. Mã thoát 0 → sang Cell 2.
+
+**Cell 2 — chạy thật (Save Version → Save & Run All)**
+```python
+!bash tools/run_diag_origin.sh
+!cat /kaggle/working/exp/oem_dapn/diag_origin/summary.md
+```
+Thứ tự: eval 1/4, eval 1/8, diagnose 1/4 b1, 1/8 b1, 1/4 b2, 1/8 b2. Một bước lỗi không dừng các bước sau.
+Mã thoát: 0 mọi bước OK; 2 preflight lỗi (chưa chạy gì); 4 có bước lỗi (xem `run_log.txt`; `eval_ckpt` MISMATCH với `final_eval.json` → dừng và gửi log).
+Tùy chọn: `--only eval|diagnose`, `--branches "1"`, `--splits 1/4`.
+
+**Đầu ra** — `/kaggle/working/exp/oem_dapn/diag_origin/` (được lưu theo version):
+```
+run_log.txt  summary.md  summary.csv  paths.env
+1_4/eval_ckpt/eval_ckpt.json, eval_ckpt_confusion_{b1,agree_wrong}.csv
+1_4/diagnose_b1/diagnose_b1.json, diagnose_b1_per_class.csv      (và diagnose_b2/)
+1_8/...                                                            (giống 1_4)
+```
+`summary.md`: bảng A (mIoU, đối chiếu `final_eval.json`, agree_right/agree_wrong/conflict, err_b1, cận dưới cũ `err_b1 − conflict`), bảng B (agree_wrong theo lớp), bảng C (mỗi split × nhánh: tỉ lệ pixel, độ thuần, cụm lẫn, dải biên, cụm thuần của lớp bị đoán; mean ± std trên 3 seed EM). Chỉ số liệu, không diễn giải.
+
+**Thời gian:** ~20–30 phút trên T4 (mỗi lượt val 384 ảnh ≈ 85–92 s, tổng 10 lượt). Kiểm tra tài khoản có mở được phiên GPU song song với phiên DAPN đang chạy không (giới hạn số phiên GPU đồng thời của Kaggle).
+
+**Lấy về máy:** trang notebook → Output → tải version; chép thư mục `diag_origin/` vào `D:\Papers\Semi_SITC\STIC_semi\CCVC_Search\CCVC-Origin\`.
+
 **Đối chiếu phân vùng với baseline** (khuyến nghị cho bước 2–3):
 ```python
 !bash run_dapn.sh split 1/4 --baseline-part-root <ORIGIN>/partitions/oem

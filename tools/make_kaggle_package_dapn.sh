@@ -23,5 +23,9 @@ ZIP="$OUT/ccvc_dapn_oem.zip"
 rm -f "$ZIP"
 git archive --format=zip --prefix=CCVC-DAPN/ --add-file="$TMP/PACKAGE_COMMIT" -o "$ZIP" HEAD
 rm -rf "$TMP"
+for f in tools/run_diag_origin.sh tools/summarize_diag_origin.py; do      # diagnostics 0a/0b of the origin runs
+    unzip -l "$ZIP" | grep -q "CCVC-DAPN/$f\$" || { echo "[package] ERROR: $f missing from the zip"; exit 2; }
+done
 echo "[package] $ZIP  ($(du -h "$ZIP" | cut -f1), commit ${COMMIT:0:7}, $(unzip -l "$ZIP" | tail -1 | awk '{print $2}') files)"
 echo "[package] Kaggle: unzip -q ccvc_dapn_oem.zip -d /kaggle/working && cd /kaggle/working/CCVC-DAPN && bash run_dapn.sh split 1/4 --dryrun"
+echo "[package] origin diagnostics 0a/0b: cd /kaggle/working/CCVC-DAPN && bash tools/run_diag_origin.sh --quick  (then without --quick)"

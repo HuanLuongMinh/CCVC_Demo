@@ -152,3 +152,21 @@ PASS  unzipped: run_dapn.sh --dryrun exit 0
 PASS  unzipped run records the package commit
 ==== run_cpu_tests_dapn: 73 passed, 0 failed ====
 ```
+
+---
+
+## Chẩn đoán origin 0a/0b trên Kaggle — `tools/run_diag_origin.sh` (24/11/2026)
+
+`bash tools/tests_dapn/test_run_diag_origin.sh <work_dir>` — CPU, dữ liệu giả lập, hai run origin ngắn (`run_baseline.sh` 1/4, 1/8) đặt như input Kaggle (cây chỉ đọc giả lập, kiểm sha256 trước/sau).
+
+```
+=== 0. synthetic data + two short origin runs ===             4 PASS
+=== 1. --quick (auto-discovered paths, preflight) ===          4 PASS
+=== 2. full run: 6 steps, 6 output dirs, summary A-C, input untouched ===   8 PASS
+=== 3. preflight failures (missing final_eval.json, val.txt line count, two different final.pth for one split,
+       identical copies counted once, --run-1-4 resolves, missing val image) ===   6 PASS
+=== 4. corrupted 1/8 checkpoint: 1/8 steps fail, 1/4 steps run, summary 'chưa có', exit 4 ===   4 PASS
+=== 5. verify_origin step 1, check_dapn_diff, test_diagnose.py ===   3 PASS
+test_run_diag_origin: 29 passed, 0 failed
+```
+`eval_ckpt.py`, `diagnose_entanglement.py` và mọi file của `ORIGIN_MANIFEST.sha256` không đổi.
