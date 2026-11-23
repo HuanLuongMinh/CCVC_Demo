@@ -171,8 +171,8 @@ EPOCHS=2 MAX_SESSION_HOURS=0.000001 dapn split 1/8; rc=$?
 R8="$D_OUT/1_8_s0/ccvc_dapn/seed0"
 check "stopped for resume (exit 3), last.pth written" test $rc -eq 3 -a -f "$R8/last.pth"
 check "last.pth holds da1.* and da2.*" $PY -c "
-import torch; sd = torch.load(r'$R8/last.pth', map_location='cpu', weights_only=False)['model']
-assert any(k.startswith('da1.') for k in sd) and any(k.startswith('da2.') for k in sd)"
+import sys, torch; sd = torch.load(sys.argv[1], map_location='cpu', weights_only=False)['model']
+assert any(k.startswith('da1.') for k in sd) and any(k.startswith('da2.') for k in sd)" "$R8/last.pth"
 EPOCHS=2 EXTRA="--crop_size 64 --log_every 2 --w_dapg 0.3" dapn split 1/8; rc=$?
 check "w_dapg changed -> resume blocked" bash -c "test $rc -ne 0 && grep -q 'resume blocked: DAPN configuration differs' '$W/last.log' && grep -q 'w_dapg' '$W/last.log'"
 EPOCHS=2 dapn split 1/8; rc=$?
