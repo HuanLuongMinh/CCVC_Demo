@@ -131,6 +131,30 @@ for k, v in {'code_version': 'dapn', 'use_dapg': True, 'dapg_on': 'lu', 'dapg_br
 assert c['deviations_from_dapn'] and c['ccvc_dapn_commit']
 EOF
 
+section "stage-2 measurements run by the same command right after training (tools/post_run_dapn.py)"
+cp "$W/all_runs.log" "$W/after_full.log"
+check "ccvc_dapn run: diagnose_b1.json and diagnose_b2.json written after training" test -f "$RD/diagnose_b1.json" -a -f "$RD/diagnose_b2.json"
+check "baseline (run_baseline.sh 1/4, same seed): eval_ckpt.json + diagnose_b1/b2.json written" \
+    test -f "$RO/eval_ckpt.json" -a -f "$RO/diagnose_b1.json" -a -f "$RO/diagnose_b2.json"
+check "results_summary.csv in exp/oem_dapn with the origin and the DAPN row" $PY - "$D_OUT/results_summary.csv" <<'EOF'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+k = {(r['code_version'], r['split'], r['method']) for r in rows}
+assert ('origin', '1_4', 'ccvc_aug') in k and ('dapn', '1_4', 'ccvc_dapn') in k, k
+o = [r for r in rows if r['code_version'] == 'origin'][0]
+assert o['agree_wrong_ratio'] != '' and o['diag_b1_purity_agree_wrong'] != '' and o['diag_b2_purity_agree_wrong'] != ''
+EOF
+check "summary table printed, analysis complete, exit 0" bash -c "grep -aq 'ANALYSIS SUMMARY' '$W/after_full.log' && grep -aq 'analysis complete' '$W/after_full.log'"
+dapn split 1/4; rc=$?
+check "same command again: exit 0, every step already done (nothing recomputed)" bash -c "test $rc -eq 0 && test \$(grep -ac 'already done' '$W/last.log') -ge 5 && ! grep -aq 'estimated' '$W/last.log'"
+rm "$RD/diagnose_b2.json"
+SESSION_START=$(( $(date +%s) - 12 * 3600 )) dapn split 1/4; rc=$?
+check "no session time left: step not started, message to rerun, exit 0" bash -c "test $rc -eq 0 && grep -aq 'NOT STARTED' '$W/last.log' && grep -aq 'analysis INCOMPLETE' '$W/last.log' && test ! -f '$RD/diagnose_b2.json'"
+dapn split 1/4; rc=$?
+check "next call of the same command finishes the missing step only" bash -c "test $rc -eq 0 && test -f '$RD/diagnose_b2.json' && test \$(grep -ac 'estimated' '$W/last.log') -eq 1"
+dapn split 1/4 --no-analysis; rc=$?
+check "--no-analysis: skipped" bash -c "test $rc -eq 0 && grep -aq 'analysis skipped' '$W/last.log'"
+
 section "12. eval_ckpt.py: origin and DAPN checkpoints reproduce final_eval.json"
 $PY tools/eval_ckpt.py --ckpt "$RO/final.pth" --device cpu --num-workers 0 > "$W/ec_o.log" 2>&1
 check "origin checkpoint: three mIoU = final_eval.json (+-0.01)" test $? -eq 0

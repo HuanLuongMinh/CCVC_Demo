@@ -58,19 +58,41 @@ Dùng GitHub thì thay bằng:
 
 ---
 
-## Bước 2 — Thứ tự chạy đề xuất (anh quyết định từng bước)
+## Bước 2 — Một lệnh: train rồi đo luôn
+
+```python
+!bash run_dapn.sh split 1/4
+```
+Lệnh này làm trọn: kiểm tra origin → train 80 epoch (resume qua nhiều phiên) → **ngay sau khi train xong, tự chạy các phép đo giai đoạn 2**:
+
+1. `diagnose_entanglement.py` nhánh 1 và nhánh 2 trên `final.pth` vừa train.
+2. Với **baseline cùng split, cùng seed** (checkpoint CCVC origin): `eval_ckpt.py` (lấy `agree_wrong_ratio`; ba mIoU phải khớp `final_eval.json` của baseline) và `diagnose_entanglement.py` nhánh 1, 2.
+   Baseline được tìm theo thứ tự: `--baseline-run <dir>`; `run_baseline.sh` đã chạy trong cùng notebook (`/kaggle/working/exp/oem/...`); `--method ccvc_origin`; **output notebook origin được add làm input** (`/kaggle/input/**/exp/oem/<split>/ccvc_aug/seed<n>`). Không tìm thấy → chỉ đo run này.
+3. `results_summary.csv` (gom origin + DAPN) trong `/kaggle/working/exp/oem_dapn/`, và in **ANALYSIS SUMMARY**: mIoU b1/b2/ave, `agree_wrong_ratio`, `agree_right_ratio`, `conflict_ratio`, độ thuần cụm của nhóm đồng thuận–đúng / đồng thuận–sai — baseline và run này đặt cạnh nhau.
+
+**Thời gian phiên.** Mỗi phép đo được ước lượng theo thời gian eval của run (diagnose ≈ 2,5 lần một lượt eval). Phép đo nào không kịp xong trước giới hạn 12 giờ (chừa 20 phút) thì **không bắt đầu**; log báo `analysis INCOMPLETE`. Phiên sau chạy **đúng lệnh cũ**: train đã xong nên lệnh chỉ làm nốt phần đo còn thiếu (phần đã có được giữ, không tính lại). Cũng vậy khi split đã chạy xong từ trước: chạy lại lệnh là bổ sung phép đo.
+
+Tùy chọn: `--no-analysis` (chỉ train), `--no-analysis-baseline` (không đo baseline), `--baseline-run <thư mục run origin>`.
+Mã thoát: 0 xong; 3 hết giờ khi đang train (chạy lại lệnh cũ); **4 = train xong nhưng phép đo báo lỗi** (ví dụ `eval_ckpt` MISMATCH) → dừng và gửi log.
+
+**Chuẩn bị để có baseline:** add output của notebook origin (có `exp/oem/1_4_s0/ccvc_aug/seed0/final.pth`) làm input của notebook DAPN.
+
+### Thứ tự chạy đề xuất (anh quyết định từng bước)
 
 | Bước | Lệnh (Cell 2) | Mục đích | Đi tiếp khi |
 |---|---|---|---|
-| 0a | `!python tools/eval_ckpt.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem` (và `1_8_s0`) | số lỗi "đồng thuận mà sai" của baseline | – |
-| 0b | `!python tools/diagnose_entanglement.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem --branch 1` (rồi `--branch 2`) | lỗi có nằm ở cụm lẫn không | nhóm đồng thuận–sai có độ thuần thấp hơn rõ nhóm đồng thuận–đúng |
-| 1 | `!bash run_dapn.sh split 1/4 --dryrun` | bộ nhớ, thời gian | không OOM |
-| 2 | `!bash run_dapn.sh split 1/4` | kết quả chính | – |
-| 3 | `!bash run_dapn.sh split 1/8` | split thứ hai | – |
-| 4 | `--method ccvc_dapn_l`, `--method ccvc_dapn_b1` ở 1/4 | ablation | – |
+| 1 | `!bash run_dapn.sh split 1/4 --dryrun` | bộ nhớ, thời gian, so với baseline | không OOM |
+| 2 | `!bash run_dapn.sh split 1/4` | kết quả chính + đo RQ0/RQ1 cho DAPN và baseline | – |
+| 3 | `!bash run_dapn.sh split 1/8` | split thứ hai (+ đo) | – |
+| 4 | `--method ccvc_dapn_l`, `--method ccvc_dapn_b1` ở 1/4 | ablation (+ đo) | – |
 | 5 | `--seed 1`, `--seed 2` cho `--method ccvc_origin` và `ccvc_dapn` | độ tin cậy | – |
 
-`<ORIGIN>` = đường dẫn output của notebook origin dưới `/kaggle/input/...`. `eval_ckpt.py` ghi `eval_ckpt_<split>_<method>_seed<n>.json` vào `/kaggle/working/exp/oem_dapn/eval_ckpt/` khi thư mục checkpoint chỉ đọc; ba mIoU phải khớp `final_eval.json` của origin (±0,01), lệch thì lệnh báo lỗi.
+**Đo baseline trước khi train (tùy chọn, RQ0/RQ1 riêng):** vẫn chạy riêng được, kết quả được lệnh bước 2 dùng lại (không tính lại):
+```python
+!python tools/eval_ckpt.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem --out /kaggle/working/exp/oem_dapn/eval_ckpt/eval_ckpt_1_4_ccvc_aug_seed0.json
+!python tools/diagnose_entanglement.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem --branch 1
+```
+`<ORIGIN>` = đường dẫn output của notebook origin dưới `/kaggle/input/...`. Đi tiếp khi nhóm đồng thuận–sai có độ thuần thấp hơn rõ nhóm đồng thuận–đúng.
 
 **Đối chiếu phân vùng với baseline** (khuyến nghị cho bước 2–3):
 ```python
@@ -78,13 +100,10 @@ Dùng GitHub thì thay bằng:
 ```
 Khác dù một dòng → dừng (mã thoát 2).
 
-**Bước 0b** in bảng `group / share / mean purity / in mixed / near boundary` và ghi `diagnose_b<n>.json`, `diagnose_b<n>_per_class.csv` vào `/kaggle/working/exp/oem_dapn/diagnose/<split>_<method>_seed<n>/` (thư mục checkpoint trong `/kaggle/input` chỉ đọc). Mất khoảng hai lượt eval trên val. Dùng được cả cho checkpoint DAPN sau khi chạy xong.
-
-**Gom kết quả** (bất cứ lúc nào):
+**Gom lại mọi run** (bất cứ lúc nào, ví dụ sau nhiều seed):
 ```python
 !python tools/collect_results_dapn.py --roots /kaggle/working/exp/oem_dapn <ORIGIN>/exp/oem
 ```
-→ `/kaggle/working/exp/oem_dapn/results_summary.csv` (hoặc `--out <file>`). Kết quả `eval_ckpt` / `diagnose` của baseline (ghi dưới `exp/oem_dapn/`) được ghép vào đúng dòng origin.
 
 **Tiêu chí thành công (chốt trước khi chạy):** so với `ccvc_origin` cùng split, `ccvc_dapn` giảm `agree_wrong_ratio` và tăng mIoU nhánh 1 vượt độ lệch chuẩn giữa các seed. Một seed chỉ là tín hiệu ban đầu.
 
@@ -108,7 +127,8 @@ Baseline cho bảng so sánh: dry run origin cùng split (cùng notebook, hoặc
 ## Bước 4 — Chạy thật và resume
 
 - Bỏ `--dryrun`, Save Version → **Save & Run All (Commit)**.
-- **Mã thoát 0:** xong; kết quả ở khối RESULTS và trong `/kaggle/working/exp/oem_dapn/`.
+- **Mã thoát 0:** xong cả train và phép đo; kết quả ở khối RESULTS, ANALYSIS SUMMARY và trong `/kaggle/working/exp/oem_dapn/` (`results_summary.csv`).
+- **Mã thoát 4:** train xong, phép đo báo lỗi (xem dòng `[analysis]`).
 - **Mã thoát 3:** hết giờ phiên, đã lưu `last.pth` (gồm cả `da1`, `da2`). Phiên sau: add output version trước làm input, chạy **đúng lệnh cũ**. Chỉ cây `exp/oem_dapn` + `partitions/oem_dapn` được khôi phục; nếu input có cả `exp/oem` (origin) thì bị bỏ qua kèm cảnh báo.
 - Đổi tham số DAPN (`--w-dapg`, `--method`, ...) giữa chừng → resume bị chặn. Muốn chạy lại từ đầu: `--force` (thư mục cũ được đổi tên, không xóa).
 
@@ -117,6 +137,6 @@ Baseline cho bảng so sánh: dry run origin cùng split (cùng notebook, hoặc
 - `verify_origin` FAIL.
 - OOM khi train.
 - `dapg_nan_skips` tăng > 10 lần/epoch, hoặc `n_valid_proto_b1/b2` tụt về 1 kéo dài (xem `train_log.csv`).
-- `eval_ckpt.py` báo MISMATCH.
+- `eval_ckpt.py` báo MISMATCH (mã thoát 4).
 
 Gửi: `run_*.log`, `config.json`, `train_log.csv`, `eval_log.csv` của thư mục chạy.

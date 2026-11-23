@@ -117,6 +117,8 @@ Kết quả: `/kaggle/working/exp/oem_dapn/<split>_s<split_seed>/<method>/seed<s
 - `tools/collect_results_dapn.py --roots <exp/oem> <exp/oem_dapn> [...]`: một `results_summary.csv` cho cả origin và DAPN (cột `code_version`, `method`, `agree_wrong_ratio` lấy từ `final_eval.json` hoặc `eval_ckpt.json`, độ thuần từ `diagnose_b*.json`), in trung bình ± độ lệch chuẩn qua các seed.
 - `--dryrun` của preset DAPN: `trial_report.json` thêm `dapn_vs_baseline` (s/iter, peak bộ nhớ/GPU, số giờ dự kiến cho 80 epoch, số phiên Kaggle, % tăng). Baseline lấy theo thứ tự: `--baseline-trial <file>`; dry run origin cùng split trong `exp/oem` của notebook; dry run `ccvc_origin`; dry run origin trong output phiên trước dưới `/kaggle/input`; dry run `ccvc_dapn_off`. Không có thì tự chạy thêm một dry run `ccvc_dapn_off` (tắt bằng `--no-baseline-trial`).
 
+- **Đo tự động sau khi train** (`tools/post_run_dapn.py`, gọi từ `run_dapn.sh`): diagnose nhánh 1, 2 của run; `eval_ckpt` + diagnose của baseline cùng split/seed (tìm trong `exp/oem`, `ccvc_origin`, hoặc output origin dưới `/kaggle/input`); `results_summary.csv` + bảng ANALYSIS SUMMARY. Bước đã có thì bỏ qua; bước không kịp trong phiên Kaggle thì để lần gọi lại cùng lệnh. Tắt: `--no-analysis`, `--no-analysis-baseline`. Mã thoát 4 = train xong, phép đo báo lỗi.
+
 ## 6. Công cụ và kiểm thử
 
 | File | Vai trò |
@@ -128,6 +130,7 @@ Kết quả: `/kaggle/working/exp/oem_dapn/<split>_s<split_seed>/<method>/seed<s
 | `tools/diagnose_entanglement.py` | độ thuần cụm đặc trưng của các nhóm pixel (RQ1) |
 | `tools/collect_results_dapn.py` | gom kết quả origin + DAPN |
 | `tools/trial_compare_dapn.py` | so dry run DAPN với baseline (gọi từ `run_dapn.sh`) |
+| `tools/post_run_dapn.py` | phép đo giai đoạn 2 sau khi train (gọi từ `run_dapn.sh`) |
 | `tools/restore_output_dapn.py` | khôi phục `exp/oem_dapn` của phiên trước, không đụng `exp/oem` |
 | `tools/make_kaggle_package_dapn.sh` | `dist/ccvc_dapn_oem.zip` từ commit hiện tại |
 | `tools/tests_dapn/run_cpu_tests_dapn.sh <dir>` | toàn bộ kiểm thử CPU |
@@ -140,7 +143,7 @@ model/dapn/{__init__, dynamic_anchor, dapg_loss, ccvc_dapg}.py
 model/semseg/deeplabv3plus_dapn.py
 util/run_utils_dapn.py
 tools/{verify_origin, check_dapn_diff, golden_capture, eval_ckpt, restore_output_dapn,
-       diagnose_entanglement, collect_results_dapn, trial_compare_dapn}.py
+       diagnose_entanglement, collect_results_dapn, trial_compare_dapn, post_run_dapn}.py
 tools/make_kaggle_package_dapn.sh   tools/tests_dapn/
 tests/golden/origin_cpu_5iter.json
 ORIGIN_MANIFEST.sha256  ORIGIN_SOURCE.json  DAPN_SOURCE.json  README_DAPN.md  HUONG_DAN_CHAY_DAPN.md
