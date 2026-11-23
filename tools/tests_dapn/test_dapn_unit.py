@@ -155,6 +155,40 @@ def main():
     check('ccvc_dapn_b1: da1 only, no da2', hasattr(net_b1, 'da1') and not hasattr(net_b1, 'da2'))
     _, stb = compute_dapg(net_b1, passes(net_b1), ab1, lf)
     check('ccvc_dapn_b1: DA only on branch 1', all(b == 1 for _, b in stb['calls']) and stb['L_dapg_b2'] is None)
+    # ---------- --dapg_pos c4 (spec 4.3, test 17) ----------
+    from model.semseg.deeplabv3plus import Discrepancy_DeepLabV3Plus
+    ac4 = args_for(dapg_pos='c4')
+    net_c4 = build(ac4)
+    check('c4: da1 / da2 on layer4 (2048 channels)', net_c4.da1.prototypes.shape == (64, 2048) and
+          net_c4.da2.prototypes.shape == (64, 2048))
+    x = torch.randn(2, 3, 160, 160, generator=torch.Generator().manual_seed(5))
+    net_c4.train()
+    torch.manual_seed(3)
+    o_c4 = net_c4(x)
+    torch.manual_seed(3)
+    o_or = Discrepancy_DeepLabV3Plus.forward(net_c4, x)
+    check('c4, training: pred/feature identical to the origin forward, plus c4_1 / c4_2',
+          all(torch.equal(o_c4[k], o_or[k]) for k in o_or) and o_c4['c4_1'].shape[1] == 2048 and
+          o_c4['c4_2'].shape[1] == 2048)
+    net_c4.eval()
+    with torch.no_grad():
+        e_c4, e_or = net_c4(x), Discrepancy_DeepLabV3Plus.forward(net_c4, x)
+    check('c4, evaluation: exactly the origin outputs (no c4 keys)', sorted(e_c4) == sorted(e_or) and
+          all(torch.equal(e_c4[k], e_or[k]) for k in e_or))
+    net_c4.train()
+    pc4 = {}
+    for name, s in (('l', 20), ('u_strong', 21), ('u_raw', 22)):
+        g = torch.Generator().manual_seed(s)
+        img, lab = torch.randn(2, 3, 160, 160, generator=g), torch.randint(0, 8, (2, 160, 160), generator=g)
+        pc4[name] = (net_c4(img), lab)
+    Lc4, stc4 = compute_dapg(net_c4, pc4, ac4, make_loss_fn(ac4))
+    Lc4.backward()
+    check('c4: DAPG on both branches, every pass computed, grads on da1 and da2',
+          stc4['L_dapg_b1'] > 0 and stc4['L_dapg_b2'] > 0 and stc4['few_skips'] == 0 and
+          net_c4.da1.prototypes.grad is not None and net_c4.da2.prototypes.grad is not None,
+          'L %.4f' % float(Lc4))
+    del net_c4, pc4, o_c4, o_or
+
     aoff = args_for(use_dapg=False)
     net_off = build(aoff)
     check('ccvc_dapn_off: no DA module', not any(k.startswith('da') for k in net_off.state_dict()))
