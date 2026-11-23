@@ -20,6 +20,9 @@ DAPG_POS=${DAPG_POS:-feat}                  # feat (304 kênh, mặc định) | 
 BASELINE_PART_ROOT=${BASELINE_PART_ROOT:-}  # partitions/oem của lần chạy baseline: đối chiếu sha256, khác -> dừng
 BASELINE_TRIAL=${BASELINE_TRIAL:-}          # --dryrun: trial_report.json của baseline để so (trống: tự tìm)
 NO_BASELINE_TRIAL=${NO_BASELINE_TRIAL:-0}   # 1: không chạy thêm lượt thử ccvc_dapn_off khi không có baseline
+ANALYSIS=${ANALYSIS:-1}                     # 1: sau khi train xong tự đo giai đoạn 2 (diagnose, eval_ckpt baseline, tổng hợp)
+ANALYSIS_BASELINE=${ANALYSIS_BASELINE:-1}   # 0: không đo checkpoint baseline
+BASELINE_RUN=${BASELINE_RUN:-}              # thư mục run origin (có final.pth) để đo kèm; trống: tự tìm
 SEED=${SEED:-0}
 SPLIT_SEED=${SPLIT_SEED:-0}
 FULL_UNLABELED=${FULL_UNLABELED:-same}
@@ -66,6 +69,15 @@ Usage: bash run_dapn.sh split <1/16|1/8|1/4|1/2|full|n<k>> [options]
   --baseline-part-root <dir>  partitions/oem of the baseline run: labeled/unlabeled/val must be identical
   --baseline-trial <file>     --dryrun: baseline trial_report.json to compare with (default: searched)
   --no-baseline-trial         --dryrun: no extra ccvc_dapn_off dry run when no baseline report is found
+  --no-analysis               do not run the stage-2 measurements after training
+  --no-analysis-baseline      measure this run only (no baseline eval_ckpt / diagnose)
+  --baseline-run <dir>        origin run directory (final.pth) to measure with this run (default: searched)
+
+After a finished training (and when the split was already finished) the same command runs the stage-2
+measurements: diagnose_entanglement.py (branches 1, 2) of this run, eval_ckpt.py + diagnose of the baseline
+of the same split/seed, results_summary.csv and a DAPN-vs-baseline table. Steps already done are skipped;
+a step that does not fit in the Kaggle session is left for the next call of the SAME command.
+Exit code 4 = training finished but the analysis reported a problem (see [analysis] lines).
   --lambda <p>                blended (2/2/1, default) | original (5/1/2) | readme_original (5/2/1)
   --seed <n> / --split-seed <n> / --epochs <n> / --eval-every <n> / --batch-size <n>
   --full-unlabeled <m>        split full only: same (default) | none
@@ -96,6 +108,9 @@ while [[ $# -gt 0 ]]; do
         --baseline-part-root) need "$@"; BASELINE_PART_ROOT=$2; shift 2 ;;
         --baseline-trial)   need "$@"; BASELINE_TRIAL=$2; shift 2 ;;
         --no-baseline-trial) NO_BASELINE_TRIAL=1; shift ;;
+        --no-analysis)      ANALYSIS=0; shift ;;
+        --no-analysis-baseline) ANALYSIS_BASELINE=0; shift ;;
+        --baseline-run)     need "$@"; BASELINE_RUN=$2; shift 2 ;;
         --full-unlabeled)   need "$@"; FULL_UNLABELED=$2; shift 2 ;;
         --lambda)           need "$@"; LAMBDA_PRESET=$2; shift 2 ;;
         --seed)             need "$@"; SEED=$2; shift 2 ;;
@@ -200,6 +215,18 @@ rm -f "$PREP_LOG"
 [[ -d "$PART_DIR" ]] || die "split directory not created"
 FOUND_ROOT=$($PY tools/run_meta.py data_root "$PART_DIR/split_info.json")
 PART_CHECK=not_checked
+# stage-2 measurements of a finished run (tools/post_run_dapn.py); returns 0 or 4
+run_analysis() {
+    [[ "$ANALYSIS" == 1 ]] || { log "analysis skipped (--no-analysis)"; return 0; }
+    local extra=()
+    [[ -n "$BASELINE_RUN" ]] && extra+=(--baseline_run "$BASELINE_RUN")
+    [[ "$ANALYSIS_BASELINE" == 0 ]] && extra+=(--no_baseline)
+    $PY tools/post_run_dapn.py --run_dir "$1" --out_root "$OUT_ROOT" --val_list "$PART_ROOT/val.txt" \
+        --data_root "$FOUND_ROOT" --search_root "$SEARCH_ROOT" --session_start "$SESSION_START" \
+        --device "$DEVICE" --num_workers "$NUM_WORKERS" "${extra[@]}" \
+        || { log "WARNING: training is finished, but the analysis reported a problem (see [analysis] lines above)"; return 4; }
+    return 0
+}
 if [[ -n "$BASELINE_PART_ROOT" ]]; then
     $PY tools/verify_origin.py --steps 4 --part-root "$PART_ROOT" --baseline-part-root "$BASELINE_PART_ROOT" \
         --split-dir "$(basename "$PART_DIR")" || die "split differs from the baseline run ($BASELINE_PART_ROOT): stop"
@@ -226,7 +253,8 @@ else
     elif [[ -f "$RUN_DIR/final_eval.json" ]]; then
         log "split này đã chạy xong: $RUN_DIR/final_eval.json exists (--force to run it again)"
         $PY tools/show_results.py --run_dir "$RUN_DIR" --out_root "$OUT_ROOT"
-        exit 0
+        run_analysis "$RUN_DIR"
+        exit $?
     fi
 fi
 mkdir -p "$SAVE_DIR"
@@ -287,8 +315,12 @@ if [[ $RC -eq 0 && "$TRIAL" == 1 && "$CODE_VERSION" == dapn && "$METHOD" != ccvc
         log "no baseline dry run to compare with (--baseline-trial <trial_report.json> to give one)"
     fi
 fi
+if [[ $RC -eq 0 && "$TRIAL" == 0 ]]; then
+    run_analysis "$SAVE_DIR"; RC=$?
+fi
 case $RC in
     0) log "finished: $SAVE_DIR" ;;
+    4) log "finished training: $SAVE_DIR (analysis problem, exit 4)" ;;
     3) log "stopped by MAX_SESSION_HOURS=$MAX_SESSION_HOURS: save /kaggle/working (Save Version), add it as input next session and run the SAME command" ;;
     *) log "training failed with exit code $RC (log: $RUN_LOG)" ;;
 esac
