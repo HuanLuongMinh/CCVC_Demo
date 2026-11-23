@@ -1,0 +1,51 @@
+{
+ "losses": [
+  [
+   "9.73392105102539",
+   "4.165709018707275",
+   "4.294464111328125",
+   "1.2737486362457275"
+  ],
+  [
+   "9.649730682373047",
+   "4.0097761154174805",
+   "4.366426944732666",
+   "1.2735276222229004"
+  ],
+  [
+   "9.911069869995117",
+   "4.711278915405273",
+   "3.9315409660339355",
+   "1.268249273300171"
+  ],
+  [
+   "9.205428123474121",
+   "3.7083473205566406",
+   "4.2181549072265625",
+   "1.278925895690918"
+  ],
+  [
+   "8.986483573913574",
+   "4.2018961906433105",
+   "3.50475811958313",
+   "1.2798292636871338"
+  ]
+ ],
+ "weights_sha256": "1857e295042d122b3543e7fb2dab6d2f0f2015fc6785339464ea6d90e156243e",
+ "weights_sum": 110215.14686351983,
+ "n_params": 697,
+ "script": "CCVC_aug.py",
+ "at": "iter",
+ "iters": 5,
+ "seed": 0,
+ "extra": "",
+ "torch": "2.13.0+cpu",
+ "numpy": "2.2.6",
+ "python": "3.12.9",
+ "device": "cpu",
+ "threads": 1,
+ "note": "losses are repr(float) of L_total, L_sup, L_con, L_dis per iteration; weights = every optimised parameter after the last recorded iteration",
+ "generated_from": "git worktree of tag ccvc-origin (= CCVC_Demo b44dc57), tools/golden_capture.py --at iter --iters 5",
+ "generated_on": "2026-11-23",
+ "valid_for": "same torch/numpy/python versions on CPU; another version may differ in the last bits -> regenerate from the tag (README_DAPN.md)"
+}
