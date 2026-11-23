@@ -1,0 +1,25 @@
+{
+  "repo": "https://github.com/HuanLuongMinh/DAPN-for-VHR-Remote-Sensing-Segmentation",
+  "branch": "main_final",
+  "commit": "33ad6387068f78240e8b04f1dbddbc8dd6dc5d6c",
+  "note": "branch main (dfe8e43) holds older, different versions of these files: not used",
+  "files": {
+    "mmseg/models/utils/dynamic_anchor.py": {
+      "sha256": "c3ed8f88ddf30589fad536eae086fa7c6a613395fbf4ca3239d1a59822e3265b",
+      "copied_to": "model/dapn/dynamic_anchor.py"
+    },
+    "mmseg/models/losses/dapg_loss.py": {
+      "sha256": "939e7917b56c428516d7d6860a1332d52e92d47f8e632a09b87837fc789eb8f3",
+      "copied_to": "model/dapn/dapg_loss.py"
+    }
+  },
+  "reference_only": {
+    "mmseg/models/decode_heads/dapcn_head_mixin.py": "c75940201ff4b0dc02ab19b9b7f159fe6ac87b1778685e65b648009247a3bf96 (_dapg_loss: call pattern)"
+  },
+  "changes": [
+    "mmcv.runner.BaseModule -> torch.nn.Module (init_cfg removed)",
+    "mmcv / mmseg imports and registry decorators removed",
+    "__main__ demo block of dapg_loss.py removed"
+  ],
+  "copied_on": "2026-11-23"
+}
