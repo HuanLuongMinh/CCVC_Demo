@@ -1,0 +1,11 @@
+{
+  "repo": "https://github.com/HuanLuongMinh/CCVC_Demo",
+  "commit": "b44dc5707d98e12d8b015697c4f2dd66019c5ebb",
+  "tree": "9df939c4e810bebfc307cd71d310c3d5e1383efe",
+  "copied_from": "local clone CCVC-Origin (git archive b44dc57)",
+  "copied_on": "2026-11-23",
+  "tag_in_this_repo": "ccvc-origin",
+  "upstream": "https://github.com/xiaoyao3302/CCVC (see UPSTREAM_COMMIT)",
+  "results_reproduced_with_this_code": {"split_1_4_miou_b1": 57.30, "split_1_8_miou_b1": 55.46},
+  "rule": "files listed in ORIGIN_MANIFEST.sha256 are never modified; DAPN lives only in new files"
+}
