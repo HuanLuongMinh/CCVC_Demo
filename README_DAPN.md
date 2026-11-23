@@ -113,6 +113,9 @@ Kết quả: `/kaggle/working/exp/oem_dapn/<split>_s<split_seed>/<method>/seed<s
 - Epoch cuối: `confusion_b1.csv`, `confusion_agree_wrong.csv` (8×8, hàng = GT).
 - `config.json`: `code_version`, commit repo này / origin / DAPN, mọi tham số DA/DAPG, `deviations_from_dapn`, kết quả `verify_origin`. Resume bị chặn khi tham số DAPN khác.
 - `tools/eval_ckpt.py --ckpt <run>/final.pth`: chạy lại đánh giá (cả checkpoint origin) → `eval_ckpt.json` có số đo đồng thuận; ba mIoU phải khớp `final_eval.json` ±0,01.
+- `tools/diagnose_entanglement.py --ckpt <run>/final.pth --branch 1|2` (RQ0/RQ1, không train): đặc trưng 304 kênh của nhánh trên val (1/4 độ phân giải), EM cosine theo công thức `DynamicAnchorModule` (K = 64, τ = 0,1, 20 vòng, không quality gate) trên 200 000 pixel lấy mẫu, rồi gán mọi pixel vào cụm. Với ba nhóm đồng thuận–đúng / đồng thuận–sai / xung đột: độ thuần trung bình của cụm, tỉ lệ ở cụm lẫn (độ thuần < 0,6), tỉ lệ trong dải 3 pixel quanh biên GT; riêng đồng thuận–sai: tỉ lệ nằm trong cụm thuần của lớp bị dự đoán sai. Tổng và theo lớp, trung bình ± độ lệch chuẩn qua 3 seed EM → `diagnose_b<n>.json`, `diagnose_b<n>_per_class.csv`.
+- `tools/collect_results_dapn.py --roots <exp/oem> <exp/oem_dapn> [...]`: một `results_summary.csv` cho cả origin và DAPN (cột `code_version`, `method`, `agree_wrong_ratio` lấy từ `final_eval.json` hoặc `eval_ckpt.json`, độ thuần từ `diagnose_b*.json`), in trung bình ± độ lệch chuẩn qua các seed.
+- `--dryrun` của preset DAPN: `trial_report.json` thêm `dapn_vs_baseline` (s/iter, peak bộ nhớ/GPU, số giờ dự kiến cho 80 epoch, số phiên Kaggle, % tăng). Baseline lấy theo thứ tự: `--baseline-trial <file>`; dry run origin cùng split trong `exp/oem` của notebook; dry run `ccvc_origin`; dry run origin trong output phiên trước dưới `/kaggle/input`; dry run `ccvc_dapn_off`. Không có thì tự chạy thêm một dry run `ccvc_dapn_off` (tắt bằng `--no-baseline-trial`).
 
 ## 6. Công cụ và kiểm thử
 
@@ -122,6 +125,9 @@ Kết quả: `/kaggle/working/exp/oem_dapn/<split>_s<split_seed>/<method>/seed<s
 | `tools/check_dapn_diff.py` | mọi dòng khác giữa `CCVC_aug.py` và `CCVC_aug_dapn.py` phải nằm trong khối `# [DAPN]` |
 | `tools/golden_capture.py` | dấu vân tay hành vi CPU (golden, khởi tạo) |
 | `tools/eval_ckpt.py` | đánh giá checkpoint + số đo đồng thuận |
+| `tools/diagnose_entanglement.py` | độ thuần cụm đặc trưng của các nhóm pixel (RQ1) |
+| `tools/collect_results_dapn.py` | gom kết quả origin + DAPN |
+| `tools/trial_compare_dapn.py` | so dry run DAPN với baseline (gọi từ `run_dapn.sh`) |
 | `tools/restore_output_dapn.py` | khôi phục `exp/oem_dapn` của phiên trước, không đụng `exp/oem` |
 | `tools/make_kaggle_package_dapn.sh` | `dist/ccvc_dapn_oem.zip` từ commit hiện tại |
 | `tools/tests_dapn/run_cpu_tests_dapn.sh <dir>` | toàn bộ kiểm thử CPU |
@@ -133,7 +139,8 @@ CCVC_aug_dapn.py  valid_dapn.py  run_dapn.sh
 model/dapn/{__init__, dynamic_anchor, dapg_loss, ccvc_dapg}.py
 model/semseg/deeplabv3plus_dapn.py
 util/run_utils_dapn.py
-tools/{verify_origin, check_dapn_diff, golden_capture, eval_ckpt, restore_output_dapn}.py
+tools/{verify_origin, check_dapn_diff, golden_capture, eval_ckpt, restore_output_dapn,
+       diagnose_entanglement, collect_results_dapn, trial_compare_dapn}.py
 tools/make_kaggle_package_dapn.sh   tools/tests_dapn/
 tests/golden/origin_cpu_5iter.json
 ORIGIN_MANIFEST.sha256  ORIGIN_SOURCE.json  DAPN_SOURCE.json  README_DAPN.md  HUONG_DAN_CHAY_DAPN.md

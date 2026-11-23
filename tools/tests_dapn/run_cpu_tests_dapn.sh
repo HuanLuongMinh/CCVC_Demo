@@ -1,5 +1,6 @@
 #!/bin/bash
-# CPU test suite of CCVC-DAPN (spec 9.1, stage 1: tests 1-12, 14, 15, 16, 18 + DAPN on both sub-networks).
+# CPU test suite of CCVC-DAPN (spec 9.1 tests 1-18 + DAPN on both sub-networks; stage 2: 13, 17, dry-run
+# comparison with the baseline (spec 7), collect_results_dapn.py).
 #   bash tools/tests_dapn/run_cpu_tests_dapn.sh <work_dir>        (work_dir is wiped first; outside the repo)
 # Env: DAPN_ORIG_DIR=<dir with the original dynamic_anchor.py / dapg_loss.py> (default: downloaded, pinned commit)
 # Prints PASS/FAIL per check and a summary; exit code = number of failed checks. Commit before running
@@ -131,9 +132,14 @@ assert c['deviations_from_dapn'] and c['ccvc_dapn_commit']
 EOF
 
 section "12. eval_ckpt.py: origin and DAPN checkpoints reproduce final_eval.json"
-$PY tools/eval_ckpt.py --ckpt "$RO/final.pth" --device cpu --num-workers 0 --out "$W/eval_origin.json" > "$W/ec_o.log" 2>&1
+$PY tools/eval_ckpt.py --ckpt "$RO/final.pth" --device cpu --num-workers 0 > "$W/ec_o.log" 2>&1
 check "origin checkpoint: three mIoU = final_eval.json (+-0.01)" test $? -eq 0
 check "origin checkpoint recognised as origin" grep -q "origin checkpoint" "$W/ec_o.log"
+check "origin: eval_ckpt.json written next to the checkpoint, agreement metrics sum to 1" $PY - "$RO/eval_ckpt.json" <<'EOF'
+import json, sys
+e = json.load(open(sys.argv[1]))
+assert e["checkpoint_kind"] == "origin" and abs(e["agree_wrong_ratio"] + e["agree_right_ratio"] + e["conflict_ratio"] - 1) < 1e-9
+EOF
 $PY tools/eval_ckpt.py --ckpt "$RD/final.pth" --device cpu --num-workers 0 --out "$W/eval_dapn.json" > "$W/ec_d.log" 2>&1
 check "DAPN checkpoint: three mIoU = final_eval.json (+-0.01)" test $? -eq 0
 check "DAPN checkpoint: da1, da2 ignored at evaluation" grep -q "dapn (da1, da2 ignored" "$W/ec_d.log"
@@ -144,6 +150,46 @@ for k in ('agree_wrong_ratio', 'agree_right_ratio', 'conflict_ratio', 'err_b1'):
     assert abs(e[k] - f[k]) < 1e-6, (k, e[k], f[k])
 assert abs(e['agree_wrong_ratio'] + e['agree_right_ratio'] + e['conflict_ratio'] - 1) < 1e-9
 EOF
+
+section "13. diagnose_entanglement.py: constructed features, then origin and DAPN checkpoints"
+$PY tools/tests_dapn/test_diagnose.py 2>&1 | filt | tee "$W/diag_unit.log" | grep -E "^(PASS|FAIL)"
+check "test_diagnose.py: 0 failed (separable features -> purity ~ 1)" grep -q "test_diagnose: 0 failed" "$W/diag_unit.log"
+for B in 1 2; do
+    $PY tools/diagnose_entanglement.py --ckpt "$RO/final.pth" --branch $B --k 8 --iters 5 --sample 3000 \
+        --device cpu --num-workers 0 > "$W/diag_o$B.log" 2>&1
+    check "origin checkpoint, branch $B: diagnose_b$B.json + per_class.csv" test $? -eq 0 -a -f "$RO/diagnose_b$B.json" -a -f "$RO/diagnose_b${B}_per_class.csv"
+done
+$PY tools/diagnose_entanglement.py --ckpt "$RD/final.pth" --branch 1 --k 8 --iters 5 --sample 3000 \
+    --device cpu --num-workers 0 > "$W/diag_d1.log" 2>&1
+check "DAPN checkpoint, branch 1: runs (da1/da2 ignored)" bash -c "test -f '$RD/diagnose_b1.json' && grep -q 'dapn (da1, da2 ignored' '$W/diag_d1.log'"
+check "diagnose outputs: 3 EM seeds, shares sum to 1, purity in [0,1], 8 classes per CSV" $PY - "$RO" <<'EOF'
+import csv, json, sys
+d = sys.argv[1]
+for b in (1, 2):
+    j = json.load(open('%s/diagnose_b%d.json' % (d, b)))
+    o = j['overall']
+    assert len(j['per_seed']) == 3 and j['branch'] == b and j['checkpoint_kind'] == 'origin'
+    assert abs(sum(o[g + '.share']['mean'] for g in ('agree_right', 'agree_wrong', 'conflict')) - 1) < 1e-9
+    assert 0 <= o['mean_purity_all_pixels']['mean'] <= 1
+    rows = list(csv.DictReader(open('%s/diagnose_b%d_per_class.csv' % (d, b))))
+    assert len({r['class'] for r in rows}) == 8
+EOF
+
+section "collect_results_dapn.py: origin + DAPN runs in one table"
+$PY tools/collect_results_dapn.py --roots "$O_OUT" "$D_OUT" --out "$W/results_summary.csv" > "$W/collect.log" 2>&1
+check "collect: exit 0" test $? -eq 0
+check "collect: origin row (agree_* from eval_ckpt.json, diagnose columns) and DAPN row (agree_* from final_eval.json)" \
+    $PY - "$W/results_summary.csv" <<'EOF'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+o = [r for r in rows if r['code_version'] == 'origin' and r['split'] == '1_4' and r['method'] == 'ccvc_aug']
+d = [r for r in rows if r['code_version'] == 'dapn' and r['split'] == '1_4' and r['method'] == 'ccvc_dapn']
+assert len(o) == 1 and len(d) == 1, [(r['code_version'], r['split'], r['method']) for r in rows]
+assert o[0]['agree_source'] == 'eval_ckpt' and o[0]['agree_wrong_ratio'] != '' and o[0]['diag_b1_purity_agree_wrong'] != ''
+assert o[0]['diag_b2_purity_agree_right'] != ''
+assert d[0]['agree_source'] == 'final_eval' and d[0]['dapg_branches'] == 'both' and d[0]['diag_b1_purity_agree_right'] != ''
+EOF
+check "collect: mean +- std over seeds printed" grep -q "mean +- std over seeds" "$W/collect.log"
 
 section "14. output isolation and restore_output_dapn.py"
 check "origin results only under exp/oem, DAPN results only under exp/oem_dapn" bash -c \
@@ -183,6 +229,40 @@ import csv, json, sys
 it = [int(r['iteration']) for r in csv.DictReader(open(sys.argv[1] + '/train_log.csv'))]
 total = json.load(open(sys.argv[1] + '/config.json'))['total_iters']
 assert it == sorted(set(it)) and it[-1] == total, (it, total)
+EOF
+
+section "17. --dapg-pos c4: a few iterations end to end"
+EXTRA="--crop_size 192 --log_every 2" dapn split 1/4 --dapg-pos c4 --dryrun --trial-iters 3 --no-baseline-trial
+check "run_dapn.sh --dapg-pos c4 --dryrun exit 0" test $? -eq 0
+RC4="$D_OUT/1_4_s0/ccvc_dapn_c4/seed0/trial"
+check "c4: own run directory, config dapg_pos c4, DAPG on both branches (2048-d DA)" $PY - "$RC4" <<'EOF'
+import csv, json, sys
+d = sys.argv[1]
+c = json.load(open(d + '/config.json'))
+assert c['dapg_pos'] == 'c4' and c['dapg_branches'] == 'both'
+r = list(csv.DictReader(open(d + '/train_log.csv')))[0]
+assert float(r['L_dapg']) > 0 and r['L_dapg_b1'] != '' and r['L_dapg_b2'] != '', r
+EOF
+
+section "7. dry run vs baseline (trial_report.json: s/iter, memory, hours, % increase)"
+dapn split 1/4 --dryrun --trial-iters 3
+check "1/4 dry run exit 0" test $? -eq 0
+check "1/4: compared with the origin dry run of run_baseline.sh (exp/oem/.../ccvc_aug/.../trial)" $PY - "$D_OUT/1_4_s0/ccvc_dapn/seed0/trial/trial_report.json" <<'EOF'
+import json, sys
+c = json.load(open(sys.argv[1]))['dapn_vs_baseline']
+assert c['baseline_method'] == 'ccvc_aug' and '/oem/1_4_s0/ccvc_aug/' in c['baseline_report'].replace('\', '/')
+assert c['s_per_iter_median']['dapn'] and c['s_per_iter_median']['baseline'] and c['s_per_iter_median']['increase_pct'] is not None
+assert c['projected_hours_full_run']['increase_pct'] is not None and c['comparable']
+EOF
+check "comparison table printed" grep -q "DAPN vs baseline dry run" "$W/last.log"
+dapn split 1/8 --dryrun --trial-iters 3
+check "1/8 dry run (no baseline dry run yet) exit 0" test $? -eq 0
+check "1/8: extra ccvc_dapn_off dry run made and used as the baseline" bash -c \
+    "grep -q 'running the same dry run with --method ccvc_dapn_off' '$W/last.log' && test -f '$D_OUT/1_8_s0/ccvc_dapn_off/seed0/trial/trial_report.json'"
+check "1/8: trial_report.json holds the comparison with ccvc_dapn_off" $PY - "$D_OUT/1_8_s0/ccvc_dapn/seed0/trial/trial_report.json" <<'EOF'
+import json, sys
+c = json.load(open(sys.argv[1]))['dapn_vs_baseline']
+assert c['baseline_method'] == 'ccvc_dapn_off' and c['s_per_iter_median']['increase_pct'] is not None
 EOF
 
 section "18. Kaggle package: unzip into an empty directory -> verify_origin PASS, run_dapn.sh --dryrun runs"

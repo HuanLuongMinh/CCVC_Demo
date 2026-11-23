@@ -63,7 +63,7 @@ Dùng GitHub thì thay bằng:
 | Bước | Lệnh (Cell 2) | Mục đích | Đi tiếp khi |
 |---|---|---|---|
 | 0a | `!python tools/eval_ckpt.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem` (và `1_8_s0`) | số lỗi "đồng thuận mà sai" của baseline | – |
-| 0b | `diagnose_entanglement.py` (giai đoạn 2) | lỗi có nằm ở cụm lẫn không | nhóm đồng thuận–sai có độ thuần thấp hơn rõ |
+| 0b | `!python tools/diagnose_entanglement.py --ckpt <ORIGIN>/exp/oem/1_4_s0/ccvc_aug/seed0/final.pth --part-root <ORIGIN>/partitions/oem --branch 1` (rồi `--branch 2`) | lỗi có nằm ở cụm lẫn không | nhóm đồng thuận–sai có độ thuần thấp hơn rõ nhóm đồng thuận–đúng |
 | 1 | `!bash run_dapn.sh split 1/4 --dryrun` | bộ nhớ, thời gian | không OOM |
 | 2 | `!bash run_dapn.sh split 1/4` | kết quả chính | – |
 | 3 | `!bash run_dapn.sh split 1/8` | split thứ hai | – |
@@ -77,6 +77,14 @@ Dùng GitHub thì thay bằng:
 !bash run_dapn.sh split 1/4 --baseline-part-root <ORIGIN>/partitions/oem
 ```
 Khác dù một dòng → dừng (mã thoát 2).
+
+**Bước 0b** in bảng `group / share / mean purity / in mixed / near boundary` và ghi `diagnose_b<n>.json`, `diagnose_b<n>_per_class.csv` vào `/kaggle/working/exp/oem_dapn/diagnose/<split>_<method>_seed<n>/` (thư mục checkpoint trong `/kaggle/input` chỉ đọc). Mất khoảng hai lượt eval trên val. Dùng được cả cho checkpoint DAPN sau khi chạy xong.
+
+**Gom kết quả** (bất cứ lúc nào):
+```python
+!python tools/collect_results_dapn.py --roots /kaggle/working/exp/oem_dapn <ORIGIN>/exp/oem
+```
+→ `/kaggle/working/exp/oem_dapn/results_summary.csv` (hoặc `--out <file>`). Kết quả `eval_ckpt` / `diagnose` của baseline (ghi dưới `exp/oem_dapn/`) được ghép vào đúng dòng origin.
 
 **Tiêu chí thành công (chốt trước khi chạy):** so với `ccvc_origin` cùng split, `ccvc_dapn` giảm `agree_wrong_ratio` và tăng mIoU nhánh 1 vượt độ lệch chuẩn giữa các seed. Một seed chỉ là tín hiệu ban đầu.
 
@@ -93,6 +101,9 @@ Khác dù một dòng → dừng (mã thoát 2).
 | `[iter 0..9] L_DAPG ... L^l ... L^u ... b1 ... b2 ...` | L^l, L^u, b1, b2 đều > 0 |
 | `GPU0/GPU1 train peak ... GB` | dưới 16 GB; `CUDA out of memory` → **dừng và báo**, không tự giảm crop/batch/C′ |
 | `speed ... s/iter`, `full ... -> N session(s)` | thời gian, số phiên |
+| `DAPN vs baseline dry run` | bảng s/iter, peak GB, số giờ 80 epoch của DAPN so với baseline và % tăng; ghi vào `trial_report.json` (`dapn_vs_baseline`) |
+
+Baseline cho bảng so sánh: dry run origin cùng split (cùng notebook, hoặc trong output phiên trước được add làm input), hoặc `--baseline-trial <trial_report.json>`. Không có thì lệnh tự chạy thêm một dry run `ccvc_dapn_off` (300 iteration nữa); tắt bằng `--no-baseline-trial`.
 
 ## Bước 4 — Chạy thật và resume
 
