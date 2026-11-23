@@ -2,9 +2,9 @@
 
 Ngày 23/11/2026 · CPU (torch 2.13.0+cpu, numpy 2.2.6, python 3.12.9), dữ liệu giả (16 train / 4 val), mô hình huấn luyện 1–2 epoch.
 
-Lệnh: `bash tools/tests_dapn/run_cpu_tests_dapn.sh <thư mục tạm>` → **65 passed, 0 failed**. Trong đó `test_dapn_unit.py`: 34 kiểm tra; `test_diagnose.py`: 12 kiểm tra; 0 failed.
+Lệnh: `bash tools/tests_dapn/run_cpu_tests_dapn.sh <thư mục tạm>` → **73 passed, 0 failed**. Trong đó `test_dapn_unit.py`: 34 kiểm tra; `test_diagnose.py`: 12 kiểm tra; 0 failed.
 
-Phủ toàn bộ test 1–18 của spec 9.1 cùng kiểm tra DAPN trên cả hai mạng con. Giai đoạn 2 thêm: test 13 (diagnose: dữ liệu dựng sẵn + checkpoint origin/DAPN thật), test 17 (`--dapg-pos c4` đơn vị + đầu-cuối), so sánh dry run với baseline (mục 7: tìm dry run origin, hoặc tự chạy `ccvc_dapn_off`), `collect_results_dapn.py`.
+Phủ toàn bộ test 1–18 của spec 9.1, DAPN trên cả hai mạng con, và đo giai đoạn 2 chạy tự động ngay sau khi train trong cùng lệnh `run_dapn.sh` (diagnose run + baseline, eval_ckpt baseline, results_summary.csv; bỏ qua bước đã có; dừng sạch khi hết giờ phiên rồi làm nốt ở lần gọi sau).
 
 Số liệu mIoU / độ thuần trong log chỉ để kiểm tra đường chạy (mô hình 1 epoch trên dữ liệu giả), không mang ý nghĩa thực nghiệm.
 
@@ -78,6 +78,15 @@ PASS  run_baseline.sh split 1/4 exit 0
 PASS  run_dapn.sh split 1/4 (ccvc_dapn) exit 0
 PASS  DAPN on both sub-networks end to end: final.pth has da1.* and da2.*; train_log has b1 and b2 columns filled
 PASS  DAPN outputs: eval_log agreement columns, final_eval agreement metrics, confusion CSVs, config keys
+=== stage-2 measurements run by the same command right after training (tools/post_run_dapn.py) ===
+PASS  ccvc_dapn run: diagnose_b1.json and diagnose_b2.json written after training
+PASS  baseline (run_baseline.sh 1/4, same seed): eval_ckpt.json + diagnose_b1/b2.json written
+PASS  results_summary.csv in exp/oem_dapn with the origin and the DAPN row
+PASS  summary table printed, analysis complete, exit 0
+PASS  same command again: exit 0, every step already done (nothing recomputed)
+PASS  no session time left: step not started, message to rerun, exit 0
+PASS  next call of the same command finishes the missing step only
+PASS  --no-analysis: skipped
 === 12. eval_ckpt.py: origin and DAPN checkpoints reproduce final_eval.json ===
 PASS  origin checkpoint: three mIoU = final_eval.json (+-0.01)
 PASS  origin checkpoint recognised as origin
@@ -141,5 +150,5 @@ PASS  zip contains origin + DAPN files, no .git
 PASS  unzipped: verify_origin step 1 PASS
 PASS  unzipped: run_dapn.sh --dryrun exit 0
 PASS  unzipped run records the package commit
-==== run_cpu_tests_dapn: 65 passed, 0 failed ====
+==== run_cpu_tests_dapn: 73 passed, 0 failed ====
 ```
