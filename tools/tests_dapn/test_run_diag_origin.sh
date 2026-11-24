@@ -121,6 +121,32 @@ cp -p "$W/ck.bak" "$R18/final.pth"
 snap > "$W/input_after2.txt"
 check "input tree identical after the failure cases (restored)" cmp -s "$W/input_before.txt" "$W/input_after2.txt"
 
+section "4b. one split per session: --split 1/4 with only the 1/4 run attached, later --split 1/8, then merge"
+mv "$NB/exp/oem/1_8_s0" "$W/r18.away"                       # session 1: the 1/8 run is not attached
+run "$W/s14" --split 1/4 --quick; rc=$?
+check "session 1/4 --quick (1/8 run absent): exit 0, diagnose 1/4 in _quick/" bash -c \
+    "test $rc -eq 0 && test -f '$W/s14/_quick/1_4/diagnose_b1/diagnose_b1.json' && ! grep -q 'run 1/8' '$W/last.log'"
+run "$W/s14" --split 1/4; rc=$?
+check "session 1/4: exit 0, 3 steps (eval, diagnose b1, b2), only 1_4/ written" bash -c \
+    "test $rc -eq 0 && test \$(grep -cE '^  (eval_ckpt|diagnose) 1/4.*exit 0 ' '$W/last.log') -eq 3 && test ! -e '$W/s14/1_8' && test -f '$W/s14/1_4/diagnose_b2/diagnose_b2.json'"
+check "session 1/4: summary.md has only the 1/4 column" bash -c \
+    "grep -q '^| chỉ số | 1/4 |\$' '$W/s14/summary.md' && ! grep -q 'chưa có' '$W/s14/summary.md'"
+mv "$W/r18.away" "$NB/exp/oem/1_8_s0"
+mv "$NB/exp/oem/1_4_s0" "$W/r14.away"                       # session 2: only the 1/8 run attached
+run "$W/s18" --split 1/8 --quick; rc=$?
+check "session 1/8 --quick (1/4 run absent): exit 0, diagnose 1/8 in _quick/" bash -c \
+    "test $rc -eq 0 && test -f '$W/s18/_quick/1_8/diagnose_b1/diagnose_b1.json' && grep -q 'quick: diagnose 1/8 branch 1' '$W/last.log'"
+run "$W/s18" --split 1/8; rc=$?
+check "session 1/8: exit 0, 3 steps, only 1_8/ written" bash -c \
+    "test $rc -eq 0 && test \$(grep -cE '^  (eval_ckpt|diagnose) 1/8.*exit 0 ' '$W/last.log') -eq 3 && test ! -e '$W/s18/1_4'"
+mv "$W/r14.away" "$NB/exp/oem/1_4_s0"
+mkdir -p "$W/merged" && cp -r "$W/s14/1_4" "$W/s18/1_8" "$W/merged/"
+$PY tools/summarize_diag_origin.py summary --out-root "$W/merged" > /dev/null 2>&1
+check "merge of the two sessions: one summary with 1/4 and 1/8, nothing missing" bash -c \
+    "grep -q '^| chỉ số | 1/4 | 1/8 |\$' '$W/merged/summary.md' && ! grep -q 'chưa có' '$W/merged/summary.md' && test \$(grep -c '^### split' '$W/merged/summary.md') -eq 4"
+snap > "$W/input_after3.txt"
+check "input tree identical after the per-split sessions" cmp -s "$W/input_before.txt" "$W/input_after3.txt"
+
 section "5. origin untouched, DAPN markers, diagnose unit test"
 $PY tools/verify_origin.py --steps 1 > "$W/vo.log" 2>&1; check "verify_origin step 1 PASS" test $? -eq 0
 $PY tools/check_dapn_diff.py > "$W/cd.log" 2>&1; check "check_dapn_diff PASS" test $? -eq 0

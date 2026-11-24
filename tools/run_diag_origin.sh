@@ -2,7 +2,7 @@
 # Diagnostics 0a/0b on the CCVC origin checkpoints of split 1/4 and 1/8 (Kaggle, one Save Version).
 #
 #   bash tools/run_diag_origin.sh [--quick] [--data-root DIR] [--part-root DIR] [--run-1-4 DIR] [--run-1-8 DIR]
-#                                 [--out-root DIR] [--only eval|diagnose] [--branches "1 2"] [--splits "1_4 1_8"]
+#                                 [--out-root DIR] [--only eval|diagnose] [--branches "1 2"] [--split 1/4|1/8]
 #
 # 0a  tools/eval_ckpt.py              -> agree_wrong / agree_right / conflict, per class, confusion matrices
 # 0b  tools/diagnose_entanglement.py  -> branch 1 and 2: purity, mixed clusters, boundary band
@@ -10,7 +10,10 @@
 # --k 64, tau 0.1); every output path is passed explicitly (--out / --out-dir), one directory per step:
 #   <out-root>/<split>/eval_ckpt/   <out-root>/<split>/diagnose_b<n>/   + run_log.txt, summary.md, summary.csv
 # Paths not given are searched under /kaggle/input (tools/summarize_diag_origin.py find).
-# --quick: preflight + diagnose 1/4 branch 1 on 2 images (small K) into <out-root>/_quick/ (path check, 1-2 min).
+# --split 1/4 (or 1/8): one split per session, only that origin run must be attached (default: both splits).
+# --quick: preflight + diagnose <split> branch 1 on 2 images (small K) into <out-root>/_quick/ (path check, 1-2 min).
+# Outputs of separate sessions merge: copy the 1_4/ and 1_8/ folders side by side, then
+#   python tools/summarize_diag_origin.py summary --out-root <that folder>   -> one summary with both splits.
 # Exit code: 0 every step OK; 2 preflight failed (nothing ran); 4 at least one step failed (the others ran).
 #
 # Test-only environment: DIAG_SEARCH_ROOT, DIAG_TEST_DEVICE, DIAG_TEST_MAX_IMAGES, DIAG_TEST_DIAG_ARGS,
@@ -24,7 +27,7 @@ export PYTHONIOENCODING=utf-8
 QUICK=0; DATA_ROOT=''; PART_ROOT=''; RUN_14=''; RUN_18=''; ONLY=''; BRANCHES='1 2'; SPLITS='1_4 1_8'
 OUT_ROOT=/kaggle/working/exp/oem_dapn/diag_origin
 SEARCH_ROOT=${DIAG_SEARCH_ROOT:-/kaggle/input}
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 need() { [[ $# -ge 2 ]] || { echo "[diag_origin] ERROR: $1 needs a value"; exit 2; }; }
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -36,15 +39,15 @@ while [[ $# -gt 0 ]]; do
         --out-root)  need "$@"; OUT_ROOT=$2; shift 2 ;;
         --only)      need "$@"; ONLY=$2; shift 2 ;;
         --branches)  need "$@"; BRANCHES=$2; shift 2 ;;
-        --splits)    need "$@"; SPLITS=${2//\//_}; shift 2 ;;
+        --split|--splits) need "$@"; SPLITS=${2//\//_}; shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         *) echo "[diag_origin] ERROR: unknown argument '$1'"; usage; exit 2 ;;
     esac
 done
 [[ -z "$ONLY" || "$ONLY" == eval || "$ONLY" == diagnose ]] || { echo "[diag_origin] ERROR: --only eval|diagnose"; exit 2; }
 for b in $BRANCHES; do [[ "$b" == 1 || "$b" == 2 ]] || { echo "[diag_origin] ERROR: --branches takes 1 and/or 2"; exit 2; }; done
-for s in $SPLITS; do [[ "$s" == 1_4 || "$s" == 1_8 ]] || { echo "[diag_origin] ERROR: --splits takes 1_4 and/or 1_8"; exit 2; }; done
-[[ $QUICK == 1 ]] && SPLITS=1_4
+for s in $SPLITS; do [[ "$s" == 1_4 || "$s" == 1_8 ]] || { echo "[diag_origin] ERROR: --split takes 1/4 and/or 1/8"; exit 2; }; done
+[[ $QUICK == 1 ]] && SPLITS=${SPLITS%% *}           # --quick: first chosen split only
 VAL_LIST=''
 [[ -n "$PART_ROOT" ]] && VAL_LIST="$PART_ROOT/val.txt"
 
@@ -110,9 +113,9 @@ print('[preflight] GPU: ' + ', '.join(torch.cuda.get_device_name(i) for i in ran
     local common=(--val-list "$VAL" --data-root "$DATA" "${COMMON_DEV[@]}")
 
     if [[ $QUICK == 1 ]]; then
-        step "quick: diagnose 1/4 branch 1" $PY tools/diagnose_entanglement.py --ckpt "${RUN[1_4]}/final.pth" \
+        step "quick: diagnose ${SPLITS/_//} branch 1" $PY tools/diagnose_entanglement.py --ckpt "${RUN[$SPLITS]}/final.pth" \
             --branch 1 "${common[@]}" --max-images 2 --k 8 --sample 2000 --n-seeds 1 \
-            --out-dir "$LOG_DIR/1_4/diagnose_b1"
+            --out-dir "$LOG_DIR/$SPLITS/diagnose_b1"
     else
         local s b ej
         if [[ "$ONLY" != diagnose ]]; then

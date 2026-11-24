@@ -166,7 +166,9 @@ PASS  unzipped run records the package commit
 === 3. preflight failures (missing final_eval.json, val.txt line count, two different final.pth for one split,
        identical copies counted once, --run-1-4 resolves, missing val image) ===   6 PASS
 === 4. corrupted 1/8 checkpoint: 1/8 steps fail, 1/4 steps run, summary 'chưa có', exit 4 ===   4 PASS
+=== 4b. one split per session (--split 1/4 with only the 1/4 run attached, then --split 1/8; --quick per split;
+        merge of the two outputs -> one summary) ===   7 PASS
 === 5. verify_origin step 1, check_dapn_diff, test_diagnose.py ===   3 PASS
-test_run_diag_origin: 29 passed, 0 failed
+test_run_diag_origin: 36 passed, 0 failed
 ```
 `eval_ckpt.py`, `diagnose_entanglement.py` và mọi file của `ORIGIN_MANIFEST.sha256` không đổi.
